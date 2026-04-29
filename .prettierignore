@@ -1,0 +1,7 @@
+dist
+node_modules
+.serena
+package-lock.json
+
+# Hand-crafted markdown — keep current formatting
+*.md

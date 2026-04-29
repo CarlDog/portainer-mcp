@@ -1,0 +1,53 @@
+#!/usr/bin/env bash
+set -euo pipefail
+
+# 1. Secret scan via gitleaks
+if ! command -v gitleaks >/dev/null 2>&1; then
+  echo "ERROR: gitleaks not installed. Install from https://github.com/gitleaks/gitleaks" >&2
+  exit 1
+fi
+
+echo "Running gitleaks..."
+gitleaks protect --staged --redact --config .gitleaks.toml
+
+# 2. PII pattern scan
+# Catches user-home directory references and personal-domain email
+# addresses that often leak into committed content. Patterns are
+# deliberately generic so the hook itself contains no specific PII.
+echo "Running PII pattern check..."
+
+PII_PATTERNS=(
+  '[/\\]Users[/\\][A-Za-z0-9._-]+[/\\]'
+  '[/\\]home[/\\][A-Za-z0-9._-]+[/\\]'
+  '[A-Za-z0-9._%+-]+@(gmail|outlook|hotmail|yahoo|icloud|me|live|aol)\.[a-z]{2,}'
+)
+
+STAGED=$(git diff --cached --name-only --diff-filter=AM)
+if [ -z "$STAGED" ]; then
+  exit 0
+fi
+
+FOUND=0
+while IFS= read -r file; do
+  [ -z "$file" ] && continue
+  for pattern in "${PII_PATTERNS[@]}"; do
+    matches=$(git show ":$file" 2>/dev/null | grep -nE "$pattern" || true)
+    if [ -n "$matches" ]; then
+      if [ "$FOUND" -eq 0 ]; then
+        echo "" >&2
+        echo "PII patterns detected in staged content:" >&2
+        FOUND=1
+      fi
+      echo "  $file" >&2
+      printf '%s\n' "$matches" | head -3 | sed 's/^/    /' >&2
+    fi
+  done
+done <<< "$STAGED"
+
+if [ "$FOUND" -ne 0 ]; then
+  echo "" >&2
+  echo "Scrub the matches and re-stage. To adjust patterns, edit .githooks/pre-commit." >&2
+  exit 1
+fi
+
+echo "No PII patterns detected."
