@@ -1,0 +1,19 @@
+services:
+  portainer-mcp:
+    image: ghcr.io/carldog/portainer-mcp:latest
+    pull_policy: always
+    container_name: portainer-mcp
+    restart: unless-stopped
+    ports:
+      - "${HOST_PORT:-3004}:3000"
+    environment:
+      MCP_PORT: "3000"
+      PORTAINER_URL: "${PORTAINER_URL}"
+      PORTAINER_API_KEY: "${PORTAINER_API_KEY}"
+      PORTAINER_VERIFY_TLS: "${PORTAINER_VERIFY_TLS:-true}"
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O-", "http://localhost:3000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
