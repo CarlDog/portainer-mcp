@@ -58,6 +58,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 
 ## Next
 
+- **Fix the secrets-leak before anything else.** See Known Gaps —
+  `PortainerClient` needs to redact env values whose keys match a
+  secrets pattern before returning. Audit `portainer_get_container`
+  for the same issue while patching (Docker inspect also surfaces
+  container env via `Config.Env`). This is a security-blocker for
+  any further use of the read tools against environments with real
+  credentials.
 - Decide on the next batch of tools. Most likely candidates:
   `portainer_redeploy_stack` (PUT /api/stacks/{id}/git/redeploy or
   PUT /api/stacks/{id}), `portainer_container_restart`,
@@ -89,10 +96,35 @@ None active. Decisions made during scaffolding:
 
 ## Known Gaps
 
-- No tests yet.
-- No published Docker image yet (will publish on first push to main).
+- **[SECURITY — high priority] Secrets leak in `portainer_list_stacks`
+  and `portainer_get_stack`.** The Portainer API returns each stack's
+  full `Env` array with values in plaintext. The current `PortainerClient`
+  forwards the response verbatim, so calling either tool exposes every
+  stack's API keys, passwords, and bearer tokens to the MCP caller —
+  the LLM, anyone who can hit the MCP endpoint, anything that logs
+  tool outputs. Confirmed empirically on 2026-04-29: a single
+  `portainer_list_stacks` call returned the live values for
+  `PLEX_TOKEN`, every Servarr `*_API_KEY`, `QBITTORRENT_PASSWORD`,
+  and `PORTAINER_API_KEY` itself.
+
+  **Fix:** at the client layer (`PortainerClient`), redact env values
+  whose **keys** match a secrets pattern — default regex
+  `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`.
+  Replace the value with `<redacted>` before returning; never alter
+  the key. Apply once at the client so every tool benefits.
+
+  **Scope of audit:** the same leak almost certainly affects
+  `portainer_get_container` — Docker `inspect` returns `Config.Env`
+  in plaintext via the same proxy. Patch and test both endpoints in
+  the same change. Add a regression test covering at least
+  `/api/stacks`, `/api/stacks/{id}`, and the container-inspect proxy
+  path once a test setup exists.
+
+  Tracked here in lieu of a GitHub issue; promote to a real issue
+  before opening the work if you'd prefer that workflow.
 - Container logs are returned raw — Docker's stream multiplexing
   prefix bytes are NOT stripped. Readable for the LLM but ugly. Could
   parse and clean if it proves to be a problem.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
+- No tests yet.

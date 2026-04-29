@@ -92,6 +92,19 @@ docker build -t portainer-mcp .
 - Auth via env vars `PORTAINER_URL` + `PORTAINER_API_KEY`. The
   container is stateless; the API key never lands on disk in the image.
 - HTTP mode has **no MCP auth** — bind only to private networks.
+- **Secrets in upstream responses must be redacted before returning to
+  MCP callers.** Portainer's `/api/stacks` and `/api/stacks/{id}` (and
+  the Docker `inspect` proxy at
+  `/api/endpoints/{id}/docker/containers/{id}/json`) return the full
+  `Env` arrays with values in plaintext. The `PortainerClient` layer
+  is responsible for scrubbing env values whose **keys** match the
+  standard secrets pattern
+  (`(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`)
+  and replacing the value with `<redacted>`. Apply once at the client,
+  not per-tool. **Currently NOT implemented — see STATUS.md "Known
+  Gaps" for the open work.** Until it lands, treat read-tool output
+  as containing live credentials and don't paste it into untrusted
+  surfaces.
 
 ## Self-signed certs
 
