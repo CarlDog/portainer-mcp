@@ -92,19 +92,36 @@ docker build -t portainer-mcp .
 - Auth via env vars `PORTAINER_URL` + `PORTAINER_API_KEY`. The
   container is stateless; the API key never lands on disk in the image.
 - HTTP mode has **no MCP auth** — bind only to private networks.
-- **Secrets in upstream responses must be redacted before returning to
+- **Secrets in upstream responses are redacted before returning to
   MCP callers.** Portainer's `/api/stacks` and `/api/stacks/{id}` (and
   the Docker `inspect` proxy at
   `/api/endpoints/{id}/docker/containers/{id}/json`) return the full
-  `Env` arrays with values in plaintext. The `PortainerClient` layer
-  is responsible for scrubbing env values whose **keys** match the
-  standard secrets pattern
-  (`(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`)
-  and replacing the value with `<redacted>`. Apply once at the client,
-  not per-tool. **Currently NOT implemented — see STATUS.md "Known
-  Gaps" for the open work.** Until it lands, treat read-tool output
-  as containing live credentials and don't paste it into untrusted
-  surfaces.
+  `Env` arrays with values in plaintext. `PortainerClient.request<T>()`
+  runs the `redactSecrets` walker on every JSON response: any property
+  named `Env`/`env` (case-insensitive) whose value is an array gets
+  scrubbed. Env keys matching
+  `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`
+  have their values replaced with `<redacted>`; keys are never
+  altered. Handles both wire shapes — Portainer's
+  `[{Name, Value}, …]` (or lowercase) and Docker inspect's
+  `["KEY=VALUE", …]`.
+
+  **Architectural invariant — don't bypass `request<T>()`.** The
+  redactor lives in the JSON branch of `request<T>()`. Any new client
+  method that calls `fetch` directly skips the redactor silently. If
+  you need special handling (binary body, streaming, non-JSON
+  content type) extend `request<T>()` rather than adding a parallel
+  fetch path. The current exception is `containerLogs`, which goes
+  through `request<T>()` but takes the text branch — logs are
+  app-controlled output, not config, and aren't expected to contain
+  structured secrets.
+
+  **Known limitation:** `portainer_get_stack` returns
+  `StackFileContent` (raw compose YAML). The redactor only scrubs
+  structured `Env` arrays, not arbitrary YAML — so secrets inlined
+  in compose files (rather than referenced via `${VAR}`) will still
+  surface. Use stack-level env vars + `${VAR}` references in compose
+  to stay covered. See STATUS.md Known Gaps.
 
 ## Self-signed certs
 
