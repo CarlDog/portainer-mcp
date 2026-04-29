@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-04-28
+**Last updated:** 2026-04-29
 
 ## Phase
 
@@ -55,16 +55,28 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   (`project_overview`, `structure`, `suggested_commands`, `conventions`,
   `task_completion`). Memories are workstation-neutral.
 - OpenChronicle registered local-scope for this directory.
+- **Secrets-leak fix landed in `PortainerClient`.** Generic
+  `redactSecrets` walker runs once on every JSON response inside
+  `request<T>()`. Recursively descends the response tree; any
+  property literally named `Env`/`env` (case-insensitive) whose
+  value is an array gets scrubbed. Handles both shapes: Portainer's
+  `[{Name, Value}, …]` (stacks) and Docker inspect's
+  `["KEY=VALUE", …]` (`Config.Env`). Key-pattern regex is the one
+  STATUS specified:
+  `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`
+  — values get replaced with `<redacted>`, keys are never altered.
+  Covers `portainer_list_stacks`, `portainer_get_stack`, and
+  `portainer_get_container` in one place; any future tool added at
+  the client layer inherits the protection. `containerLogs`
+  returns text not JSON, so the walker doesn't run on it (logs are
+  app-controlled output, not config — separate concern).
 
 ## Next
 
-- **Fix the secrets-leak before anything else.** See Known Gaps —
-  `PortainerClient` needs to redact env values whose keys match a
-  secrets pattern before returning. Audit `portainer_get_container`
-  for the same issue while patching (Docker inspect also surfaces
-  container env via `Config.Env`). This is a security-blocker for
-  any further use of the read tools against environments with real
-  credentials.
+- Smoke-test the redactor against the live NAS once the new image
+  is published and the stack is redeployed. Until that cycle
+  completes, `http://your-nas:3004/mcp` still serves the old
+  leaky build.
 - Decide on the next batch of tools. Most likely candidates:
   `portainer_redeploy_stack` (PUT /api/stacks/{id}/git/redeploy or
   PUT /api/stacks/{id}), `portainer_container_restart`,
@@ -96,32 +108,26 @@ None active. Decisions made during scaffolding:
 
 ## Known Gaps
 
-- **[SECURITY — high priority] Secrets leak in `portainer_list_stacks`
-  and `portainer_get_stack`.** The Portainer API returns each stack's
-  full `Env` array with values in plaintext. The current `PortainerClient`
-  forwards the response verbatim, so calling either tool exposes every
-  stack's API keys, passwords, and bearer tokens to the MCP caller —
-  the LLM, anyone who can hit the MCP endpoint, anything that logs
-  tool outputs. Confirmed empirically on 2026-04-29: a single
-  `portainer_list_stacks` call returned the live values for
-  `PLEX_TOKEN`, every Servarr `*_API_KEY`, `QBITTORRENT_PASSWORD`,
-  and `PORTAINER_API_KEY` itself.
-
-  **Fix:** at the client layer (`PortainerClient`), redact env values
-  whose **keys** match a secrets pattern — default regex
-  `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`.
-  Replace the value with `<redacted>` before returning; never alter
-  the key. Apply once at the client so every tool benefits.
-
-  **Scope of audit:** the same leak almost certainly affects
-  `portainer_get_container` — Docker `inspect` returns `Config.Env`
-  in plaintext via the same proxy. Patch and test both endpoints in
-  the same change. Add a regression test covering at least
-  `/api/stacks`, `/api/stacks/{id}`, and the container-inspect proxy
-  path once a test setup exists.
-
-  Tracked here in lieu of a GitHub issue; promote to a real issue
-  before opening the work if you'd prefer that workflow.
+- **Inline secrets in compose YAML are not redacted.**
+  `portainer_get_stack` returns `StackFileContent` — the raw compose
+  file string. The redactor only scrubs structured `Env` arrays, not
+  arbitrary YAML. If a user inlines a secret directly in a compose
+  file (e.g. `environment: [PASSWORD=hunter2]` instead of `${PASSWORD}`
+  + a stack-env reference), `portainer_get_stack` will still surface
+  it. Mitigation is to use `${VAR}` references in compose and put the
+  value in stack-level env vars, which is the recommended Portainer
+  pattern and what the redactor covers. Reliable YAML scrubbing is a
+  much bigger lift; deferring until there's a concrete need.
+- Redaction is **key-based, not value-based.** A high-entropy string
+  stored under a key that doesn't match the pattern (e.g. `BUILD_ID`,
+  `INSTANCE_ARN`) is still passed through. This is intentional —
+  matching by value would have to choose between aggressive heuristics
+  (false positives on long IDs/UUIDs) or ML-style entropy (overkill).
+  Known acceptable trade-off for v1.
+- No regression test for the redactor yet. Add when test infra
+  lands; the cases to cover are `/api/stacks`, `/api/stacks/{id}`,
+  and the container-inspect proxy path
+  (`/api/endpoints/{id}/docker/containers/{id}/json`).
 - Container logs are returned raw — Docker's stream multiplexing
   prefix bytes are NOT stripped. Readable for the LLM but ugly. Could
   parse and clean if it proves to be a problem.

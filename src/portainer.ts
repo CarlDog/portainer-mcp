@@ -13,6 +13,60 @@ interface FetchInitWithDispatcher extends RequestInit {
   dispatcher?: Agent;
 }
 
+const SECRET_KEY_RE =
+  /(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)/i;
+const REDACTED = "<redacted>";
+
+function scrubEnvArray(arr: unknown[]): unknown[] {
+  return arr.map((entry) => {
+    if (entry !== null && typeof entry === "object" && !Array.isArray(entry)) {
+      const e = entry as Record<string, unknown>;
+      const nameKey = "Name" in e ? "Name" : "name" in e ? "name" : null;
+      const valueKey = "Value" in e ? "Value" : "value" in e ? "value" : null;
+      if (
+        nameKey &&
+        valueKey &&
+        typeof e[nameKey] === "string" &&
+        SECRET_KEY_RE.test(e[nameKey] as string)
+      ) {
+        return { ...e, [valueKey]: REDACTED };
+      }
+      return entry;
+    }
+    if (typeof entry === "string") {
+      const eq = entry.indexOf("=");
+      if (eq > 0) {
+        const key = entry.slice(0, eq);
+        if (SECRET_KEY_RE.test(key)) {
+          return `${key}=${REDACTED}`;
+        }
+      }
+    }
+    return entry;
+  });
+}
+
+export function redactSecrets(value: unknown): unknown {
+  if (Array.isArray(value)) {
+    for (let i = 0; i < value.length; i++) {
+      value[i] = redactSecrets(value[i]);
+    }
+    return value;
+  }
+  if (value !== null && typeof value === "object") {
+    const obj = value as Record<string, unknown>;
+    for (const [k, v] of Object.entries(obj)) {
+      if (k.toLowerCase() === "env" && Array.isArray(v)) {
+        obj[k] = scrubEnvArray(v);
+      } else {
+        obj[k] = redactSecrets(v);
+      }
+    }
+    return obj;
+  }
+  return value;
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -62,7 +116,8 @@ export class PortainerClient {
     }
     const ctype = res.headers.get("content-type") ?? "";
     if (ctype.includes("application/json")) {
-      return (await res.json()) as T;
+      const data = (await res.json()) as unknown;
+      return redactSecrets(data) as T;
     }
     return (await res.text()) as unknown as T;
   }
