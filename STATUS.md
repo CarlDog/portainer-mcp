@@ -4,9 +4,10 @@
 
 ## Phase
 
-Scaffolding — initial repo structure created with HTTP transport from
-the start. Pending build verification + smoke test against a real
-Portainer instance.
+Deployed and verified — running on the NAS at
+`http://your-nas:3004/mcp`, returning live stack data via
+`portainer_list_stacks`. Full chain proven (dev machine → HTTP → MCP
+session → PortainerClient → host.docker.internal:9443 → Portainer).
 
 ## Done
 
@@ -33,23 +34,39 @@ Portainer instance.
   (typecheck/build matrix + lint/format quality job)
 - Project docs: CLAUDE.md, STATUS.md, README.md
 
+## Done (post-scaffold)
+
+- `npm install` + tsc + lint + format all clean. SDK + undici + zod +
+  express resolved cleanly.
+- Public repo published at https://github.com/CarlDog/portainer-mcp
+  with a no-PII commit author.
+- Smoke-tested HTTP transport locally: `/health` 200, MCP initialize
+  + `portainer_list_endpoints` + `portainer_list_stacks` all returned
+  real Portainer data.
+- Added `extra_hosts: host.docker.internal:host-gateway` to compose so
+  the deployed container can reach the host's Portainer on 9443.
+- Deployed to the NAS via Portainer API (stack id 129). Container
+  pulls `ghcr.io/carldog/portainer-mcp:latest`, runs HTTP transport
+  on host port 3004 → container 3000.
+- Verified deployed instance end-to-end: `tools/call portainer_list_stacks`
+  via `http://your-nas:3004/mcp` returns all 36 stacks including
+  itself.
+- Serena project activated with five memories
+  (`project_overview`, `structure`, `suggested_commands`, `conventions`,
+  `task_completion`). Memories are workstation-neutral.
+- OpenChronicle registered local-scope for this directory.
+
 ## Next
 
-- `npm install` + `tsc` clean. Verify SDK + undici resolve.
-- Smoke-test the HTTP transport: `MCP_PORT=3004 npm run dev` against
-  the real Portainer at `https://your-nas:9443`. Hit `/mcp` with
-  the MCP Inspector or curl, verify `portainer_list_stacks` returns
-  the expected stack list.
-- Smoke-test stdio path post-build.
-- Commit + push to GitHub (under CarlDog, public, no-PII commit author).
-- Configure Serena project + onboarding memories.
-- Register OpenChronicle MCP locally for this directory.
-- Deploy to the NAS via Portainer (using the existing deploy script —
-  it'd be a fun bootstrap to use portainer-mcp itself for this once
-  it's deployed, but for the first deploy we use the script).
-- Once deployed, decide on the next batch of tools — most likely
-  candidates: `portainer_redeploy_stack`, `portainer_container_restart`.
-  These are write operations and warrant a more conservative rollout.
+- Decide on the next batch of tools. Most likely candidates:
+  `portainer_redeploy_stack` (PUT /api/stacks/{id}/git/redeploy or
+  PUT /api/stacks/{id}), `portainer_container_restart`,
+  `portainer_container_stop`, `portainer_container_start`. These are
+  write operations; treat as a separate, focused commit per the
+  CLAUDE.md "write operations" guidance.
+- Add tests once a real Portainer test target is set up.
+- Consider a `portainer_deploy_stack` tool that wraps the
+  string-based deploy we used by hand. Self-bootstrapping potential.
 
 ## Open Decisions
 

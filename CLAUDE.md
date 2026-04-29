@@ -123,3 +123,19 @@ path is solid.
 No tests yet. When added, integration tests against a real Portainer
 instance behind env-gated tests (don't mock — see working-style note
 about mocked-vs-real divergence).
+
+## MCP tooling (local workstation)
+
+This repo is registered with two MCP servers for Claude Code sessions
+opened in this directory:
+
+- **Serena** — user-scoped (available in every project on this machine).
+  Project memories are written under the `portainer-mcp` Serena project.
+- **OpenChronicle** — registered at *local scope* for this directory
+  via `claude mcp add openchronicle -- oc mcp serve`. Effective for
+  future Claude Code sessions opened with cwd = repo root. Config lives
+  in `~/.claude.json` under the project entry — not committed.
+
+If you re-clone the repo on another machine, re-register OpenChronicle
+with the same command. Serena will work automatically if it's already
+user-scoped on that machine.
