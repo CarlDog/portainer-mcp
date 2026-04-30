@@ -83,6 +83,7 @@ export class PortainerClient {
     path: string,
     query?: Record<string, string>,
     body?: unknown,
+    opts?: { noRedact?: boolean },
   ): Promise<T> {
     const url = new URL(path, this.config.url);
     if (query) {
@@ -117,7 +118,7 @@ export class PortainerClient {
     const ctype = res.headers.get("content-type") ?? "";
     if (ctype.includes("application/json")) {
       const data = (await res.json()) as unknown;
-      return redactSecrets(data) as T;
+      return (opts?.noRedact ? data : redactSecrets(data)) as T;
     }
     return (await res.text()) as unknown as T;
   }
@@ -178,6 +179,55 @@ export class PortainerClient {
 
   async systemStatus(): Promise<unknown> {
     return this.request("GET", "/api/system/status");
+  }
+
+  async redeployStack(
+    stackId: number,
+    opts: { pullImage: boolean; prune: boolean },
+  ): Promise<unknown> {
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: unknown[];
+      GitConfig?: unknown;
+    }
+    const stack = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${stackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (stack.GitConfig != null) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) is git-managed. Use the git redeploy endpoint instead — file-based PUT would silently detach it from git.`,
+      );
+    }
+    if (stack.Type !== 1 && stack.Type !== 2) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; redeploy supports only Compose (2) and Swarm (1). Kubernetes stacks (3) require a different endpoint.`,
+      );
+    }
+    const file = await this.request<{ StackFileContent: string }>(
+      "GET",
+      `/api/stacks/${stackId}/file`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    return this.request(
+      "PUT",
+      `/api/stacks/${stackId}`,
+      { endpointId: String(stack.EndpointId) },
+      {
+        stackFileContent: file.StackFileContent,
+        env: stack.Env ?? [],
+        repullImageAndRedeploy: opts.pullImage,
+        prune: opts.prune,
+      },
+    );
   }
 }
 
@@ -291,5 +341,39 @@ export function registerPortainerTools(
       inputSchema: {},
     },
     async () => asText(await p.systemStatus()),
+  );
+
+  server.registerTool(
+    "portainer_redeploy_stack",
+    {
+      title: "Portainer: Redeploy Stack",
+      description:
+        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer.",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID to redeploy"),
+        pull_image: z
+          .boolean()
+          .optional()
+          .describe("Pull the latest image before recreating (default true)"),
+        prune: z
+          .boolean()
+          .optional()
+          .describe(
+            "Remove containers for services no longer in the compose (default false)",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive action",
+          ),
+      },
+    },
+    async ({ stack_id, pull_image, prune }) =>
+      asText(
+        await p.redeployStack(stack_id, {
+          pullImage: pull_image ?? true,
+          prune: prune ?? false,
+        }),
+      ),
   );
 }

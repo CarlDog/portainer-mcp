@@ -5,3 +5,8 @@ package-lock.json
 
 # Hand-crafted markdown — keep current formatting
 *.md
+
+# Pinned upstream OpenAPI spec snapshots — don't reformat. Keeping
+# upstream's whitespace means future refreshes diff against the
+# upstream original instead of our prettifier's preferences.
+docs/specs/

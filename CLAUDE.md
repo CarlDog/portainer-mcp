@@ -121,6 +121,19 @@ docker build -t portainer-mcp .
   app-controlled output, not config, and aren't expected to contain
   structured secrets.
 
+  **Opt-out for round-trip writes — `{ noRedact: true }`.**
+  `request<T>()` accepts an optional `{ noRedact: true }` flag that
+  skips the JSON redactor. Use it ONLY when the response is fed
+  immediately into another API call and never returned to an MCP
+  caller — e.g. `redeployStack` GETs the stack with `noRedact: true`
+  so it can PUT the real env back (the affected stack-update
+  endpoints unconditionally assign `stack.Env = payload.Env`, so
+  posting the redacted shape would wipe the real secrets — see
+  [PORTAINER-API.md](docs/PORTAINER-API.md) "Env round-trip is
+  required"). A single `grep -rn "noRedact: true" src/` should find
+  every callsite — security review checks that each one is a true
+  internal round-trip, never a path that reaches the MCP wire.
+
   **Known limitation:** `portainer_get_stack` returns
   `StackFileContent` (raw compose YAML). The redactor only scrubs
   structured `Env` arrays, not arbitrary YAML — so secrets inlined
