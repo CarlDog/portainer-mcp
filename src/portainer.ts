@@ -278,6 +278,94 @@ export class PortainerClient {
       },
     );
   }
+
+  async redeployGitStack(
+    stackId: number,
+    opts: { pullImage: boolean; prune?: boolean },
+  ): Promise<unknown> {
+    interface RawAuth {
+      Username?: string;
+      AuthorizationType?: number;
+    }
+    interface RawGitConfig {
+      ReferenceName?: string;
+      Authentication?: RawAuth | null;
+    }
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: unknown[];
+      GitConfig?: RawGitConfig | null;
+      Option?: { Prune?: boolean } | null;
+    }
+    const stack = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${stackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (stack.GitConfig == null) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) is not git-managed. Use portainer_redeploy_stack for file-based stacks.`,
+      );
+    }
+    if (stack.Type !== 1 && stack.Type !== 2) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; git redeploy supports only Compose (2) and Swarm (1). Kubernetes git stacks have a different update flow.`,
+      );
+    }
+    const auth = stack.GitConfig.Authentication;
+    const payload: Record<string, unknown> = {
+      // All four are unconditionally assigned by the handler — omitting wipes
+      // them. Round-trip the existing values so a "redeploy as-is" call doesn't
+      // silently destroy the stack's git/env config.
+      repositoryReferenceName: stack.GitConfig.ReferenceName ?? "",
+      env: stack.Env ?? [],
+      repullImageAndRedeploy: opts.pullImage,
+      prune: opts.prune ?? stack.Option?.Prune ?? false,
+      repositoryAuthentication: auth != null,
+    };
+    if (auth != null) {
+      // Saved password is preserved on the server side when password is
+      // empty AND existing GitConfig.Authentication is set, per the handler.
+      // We can never read the saved password back (it's blanked on response),
+      // so we always send empty and let Portainer re-use what it has.
+      payload.repositoryUsername = auth.Username ?? "";
+      payload.repositoryPassword = "";
+      if (auth.AuthorizationType !== undefined) {
+        payload.repositoryAuthorizationType = auth.AuthorizationType;
+      }
+    }
+    return this.request(
+      "PUT",
+      `/api/stacks/${stackId}/git/redeploy`,
+      { endpointId: String(stack.EndpointId) },
+      payload,
+    );
+  }
+
+  async recreateContainer(
+    endpointId: number,
+    containerId: string,
+    opts: { pullImage: boolean },
+  ): Promise<unknown> {
+    // Note: this is a Portainer-NATIVE handler (not under the Docker proxy
+    // tree). The path is `/api/docker/{id}/containers/{containerId}/recreate`,
+    // NOT `/api/endpoints/{id}/docker/containers/{containerId}/recreate`. The
+    // proxy tree at /api/endpoints/{id}/docker/ is for direct Docker API
+    // passthroughs; recreate is a Portainer composition that pulls the
+    // image, stops + removes the old container, and recreates with the
+    // same Config + HostConfig.
+    return this.request(
+      "POST",
+      `/api/docker/${endpointId}/containers/${containerId}/recreate`,
+      undefined,
+      { PullImage: opts.pullImage },
+    );
+  }
 }
 
 export function registerPortainerTools(
@@ -538,6 +626,68 @@ export function registerPortainerTools(
         await p.redeployStack(stack_id, {
           pullImage: pull_image ?? true,
           prune: prune ?? false,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_redeploy_git_stack",
+    {
+      title: "Portainer: Redeploy Git Stack",
+      description:
+        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those).",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID to redeploy"),
+        pull_image: z
+          .boolean()
+          .optional()
+          .describe("Pull the latest image before recreating (default true)"),
+        prune: z
+          .boolean()
+          .optional()
+          .describe(
+            "Remove containers for services no longer in the compose. Default: preserve the stack's existing setting (false if never set).",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive action",
+          ),
+      },
+    },
+    async ({ stack_id, pull_image, prune }) =>
+      asText(
+        await p.redeployGitStack(stack_id, {
+          pullImage: pull_image ?? true,
+          prune,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_recreate_container",
+    {
+      title: "Portainer: Recreate Container",
+      description:
+        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        container_id: z.string().describe("Container ID or name"),
+        pull_image: z
+          .boolean()
+          .optional()
+          .describe("Pull the latest image before recreating (default true)"),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive action",
+          ),
+      },
+    },
+    async ({ endpoint_id, container_id, pull_image }) =>
+      asText(
+        await p.recreateContainer(endpoint_id, container_id, {
+          pullImage: pull_image ?? true,
         }),
       ),
   );

@@ -126,29 +126,42 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   timeout. Kill accepts `?signal=` and requires `confirm: true`
   (small but real risk of corrupting state mid-write since it
   skips graceful shutdown).
+- **Git-stack redeploy + container recreate landed:**
+  `portainer_redeploy_git_stack` (`PUT /api/stacks/{id}/git/redeploy`)
+  and `portainer_recreate_container`
+  (`POST /api/docker/{id}/containers/{id}/recreate`). The git
+  redeploy uses the same `noRedact` round-trip pattern as the
+  file-based variant but extends the round-trip to cover several
+  additional wipe traps surfaced during this batch: omitting
+  `RepositoryReferenceName` blanks the git ref, omitting `Prune`
+  resets to false on Swarm, and the saved git password requires
+  sending an empty `RepositoryPassword` to be preserved.
+  `recreate_container` is a Portainer-native composition (NOT a
+  Docker proxy passthrough) that pulls the image, stops + removes
+  the old container, and recreates with the same Config +
+  HostConfig — much cleaner than stack-redeploy for "fix one
+  service after pushing a new image" workflows. The path is
+  `/api/docker/{id}/...` not `/api/endpoints/{id}/docker/...`;
+  earlier PORTAINER-API.md doc had this wrong (now corrected).
+- **GitHub Actions bumped across all 5 MCP repos** to the current
+  latest majors. Beat the June 2 2026 Node 20 force-upgrade.
 
 ## Next
 
-- **Pair: git-stack redeploy variant + `portainer_recreate_container`.**
-  - `PUT /api/stacks/{id}/git/redeploy` — different endpoint from
-    file-based redeploy, same env wipe trap, similar tool shape.
-    None of the user's 36 stacks are git-managed today, so lower
-    priority but worth shipping for completeness.
-  - `POST /containers/{id}/recreate` (Portainer-specific) — pulls
-    image and recreates a single container, preserving Config +
-    HostConfig. Cleaner than stack-redeploy for "fix one service
-    after pushing a new image" workflows.
-- **Bump deprecated GitHub Actions versions across all MCP repos.**
-  `actions/checkout@v4`, `docker/build-push-action@v5`,
-  `docker/login-action@v3`, `docker/metadata-action@v5`,
-  `docker/setup-buildx-action@v3`, `docker/setup-qemu-action@v3` —
-  GitHub flags Node 20 deprecation. Force-upgraded to Node 24 on
-  June 2 2026; Node 20 removed September 16 2026. Repos to touch:
-  portainer-mcp, plex-mcp, servarr-mcp, downloader-mcp,
-  openchronicle-mcp.
-- Add tests once a real Portainer test target is set up.
+- Add tests once a real Portainer test target is set up. Highest
+  ROI: regression coverage for the env round-trip on both redeploy
+  variants — that's the path most likely to silently corrupt state.
 - Consider a `portainer_deploy_stack` tool that wraps the
   string-based deploy we used by hand. Self-bootstrapping potential.
+- Smoke-test the new tools against the live NAS once the new image
+  ships:
+  - `portainer_recreate_container` against a low-stakes container
+    (e.g. `flaresolverr` on endpoint 2). Verify it pulls the image
+    and recreates with same config.
+  - `portainer_redeploy_git_stack` — none of the user's 36 stacks
+    are currently git-managed, so this needs a deliberate test
+    setup (create a git stack, redeploy it, confirm git config
+    survives).
 
 ## Open Decisions
 
