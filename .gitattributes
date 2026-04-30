@@ -1,0 +1,4 @@
+# OpenAPI spec snapshots come from SwaggerHub with LF endings; locking
+# them prevents CRLF round-trip noise on Windows checkouts so diffs
+# from re-fetching stay reviewable.
+docs/specs/*.json text eol=lf

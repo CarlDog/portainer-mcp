@@ -70,14 +70,49 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   the client layer inherits the protection. `containerLogs`
   returns text not JSON, so the walker doesn't run on it (logs are
   app-controlled output, not config — separate concern).
+  **Verified live** against the NAS deployment 2026-04-29 — every
+  secret-pattern Env value across all 36 stacks now returns
+  `<redacted>` and every non-secret value passes through unchanged.
+- **Architectural redaction invariant documented in CLAUDE.md.**
+  The redactor lives in `request<T>()`; any new client method that
+  bypasses it and calls `fetch` directly skips redaction silently.
+  The CLAUDE.md note flags this so future write tools (which need
+  raw env for round-trip) must route through a deliberate opt-out
+  (the planned `noRedact: true` flag) rather than a parallel fetch.
+- **Portainer API reference doc published.**
+  [`docs/PORTAINER-API.md`](docs/PORTAINER-API.md) catalogs the API
+  surface for Portainer CE 2.39.1 (the version on the NAS) — auth,
+  resource model, cross-cutting patterns, gotchas, endpoints in use,
+  endpoints we haven't built yet (with risk class), and explicit
+  out-of-scope. Pinned spec snapshot at
+  [`docs/specs/portainer.json`](docs/specs/portainer.json) (Swagger
+  2.0, 441 KB, 185 paths). Follows the
+  plex-mcp / servarr-mcp convention. Three things the research
+  surfaced that change earlier assumptions:
+  - Stack deploys are **synchronous** in 2.39.1 (the older
+    `go stackDeploy(...)` async pattern is gone). PUT blocks until
+    containers are recreated. Self-redeploy of portainer-mcp itself
+    will appear to fail because the in-flight HTTP fetch sees a
+    connection drop mid-redeploy.
+  - The Env round-trip wipe trap affects **three** update endpoints,
+    not just one: `PUT /api/stacks/{id}`, `POST /api/stacks/{id}/git`,
+    `PUT /api/stacks/{id}/git/redeploy`.
+  - `POST /containers/{id}/recreate` is a Portainer-specific
+    endpoint that does pull-and-recreate for a single container —
+    likely cleaner than the stack-redeploy round-trip dance for
+    some use cases.
 
 ## Next
 
-- Smoke-test the redactor against the live NAS once the new image
-  is published and the stack is redeployed. Until that cycle
-  completes, `http://your-nas:3004/mcp` still serves the old
-  leaky build.
-- Decide on the next batch of tools. Most likely candidates:
+- Design the write-tools batch against the documented surface.
+  First target: `portainer_redeploy_stack` for file-based stacks.
+  Implementation needs the `noRedact` opt-out on `request<T>()`
+  plus an internal `getStackRaw(id)` for the env round-trip.
+  Add the git-stack redeploy variant in the same batch (different
+  endpoint, same wipe trap).
+- Container lifecycle tools (`restart`, `stop`, `start`, `kill`)
+  are pure Docker proxy passthroughs per the doc — should be a
+  small follow-up commit after redeploy lands. Most likely candidates:
   `portainer_redeploy_stack` (PUT /api/stacks/{id}/git/redeploy or
   PUT /api/stacks/{id}), `portainer_container_restart`,
   `portainer_container_stop`, `portainer_container_start`. These are
