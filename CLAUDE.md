@@ -34,6 +34,11 @@ phase, what's done, and what's next.
 - `Dockerfile` — multi-stage build (alpine, non-root user).
 - `docker-compose.yml` — Compose/Portainer deployment using HTTP transport.
 - `.githooks/pre-commit` — gitleaks + PII pattern scan.
+- `docs/PORTAINER-API.md` — API reference for the deployed Portainer
+  version. Read before adding tools that wrap new endpoints.
+- `docs/specs/portainer.json` — pinned Swagger 2.0 spec snapshot for
+  the deployed Portainer version. Refresh when Portainer is upgraded
+  on the NAS (process documented in `PORTAINER-API.md`).
 
 ## When to add a `tools/` layer
 
