@@ -437,6 +437,11 @@ via the host's hostname (e.g. `carldog-nas:9443`). Use
 | `portainer_list_containers`   | `GET /api/endpoints/{id}/docker/containers/json` (optional `?all=true`)   | Docker proxy passthrough                            |
 | `portainer_get_container`     | `GET /api/endpoints/{id}/docker/containers/{id}/json`                     | Docker inspect; `Config.Env` redacted              |
 | `portainer_container_logs`    | `GET /api/endpoints/{id}/docker/containers/{id}/logs?tail=N&timestamps=true` | Raw Docker stream-multiplex framing                |
+| `portainer_container_start`   | `POST /api/endpoints/{id}/docker/containers/{id}/start`                   | Pure passthrough; 204 on success                    |
+| `portainer_container_stop`    | `POST /api/endpoints/{id}/docker/containers/{id}/stop` (optional `?t=N`)  | Graceful SIGTERM → SIGKILL after timeout            |
+| `portainer_container_restart` | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`) | Same SIGTERM/wait/SIGKILL/start as stop+start      |
+| `portainer_container_kill`    | `POST /api/endpoints/{id}/docker/containers/{id}/kill` (optional `?signal=`) | Skips graceful shutdown; requires `confirm: true`  |
+| `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`    |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 
 All requests carry `X-API-Key: <key>` as an HTTP header
@@ -454,7 +459,6 @@ relying on the shape.
 
 | Capability                              | Endpoint(s)                                                                                                                    | Risk class            |
 |-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|-----------------------|
-| Redeploy file-based stack               | `PUT /api/stacks/{id}` with `{stackFileContent, env, repullImageAndRedeploy: true, prune}` — round-trip env required           | Medium (sync, blocks) |
 | Redeploy git-based stack                | `PUT /api/stacks/{id}/git/redeploy` with `{env, repullImageAndRedeploy: true, prune}` — handler requires `?endpointId`         | Medium                |
 | Start stack                             | `POST /api/stacks/{id}/start` — Swarm pulls images implicitly                                                                  | Low                   |
 | Stop stack                              | `POST /api/stacks/{id}/stop` — Swarm semantics destructive                                                                     | Medium (Swarm)        |
@@ -467,10 +471,6 @@ relying on the shape.
 
 | Capability                  | Endpoint                                                                                | Risk class                        |
 |-----------------------------|-----------------------------------------------------------------------------------------|-----------------------------------|
-| Restart                     | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`)             | Low                               |
-| Stop                        | `POST /api/endpoints/{id}/docker/containers/{id}/stop` (optional `?t=N`)                | Low                               |
-| Start                       | `POST /api/endpoints/{id}/docker/containers/{id}/start`                                 | Low                               |
-| Kill                        | `POST /api/endpoints/{id}/docker/containers/{id}/kill` (optional `?signal=SIGKILL`)     | Medium                            |
 | Recreate (Portainer extra)  | `POST /api/endpoints/{id}/docker/containers/{id}/recreate` body `{PullImage: bool}`     | Medium (single-container redeploy)|
 | Delete                      | `DELETE /api/endpoints/{id}/docker/containers/{id}` (optional `?force=true&v=true`)     | High                              |
 | Stats                       | `GET /api/endpoints/{id}/docker/containers/{id}/stats?stream=false`                     | Low                               |

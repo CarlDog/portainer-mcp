@@ -181,6 +181,55 @@ export class PortainerClient {
     return this.request("GET", "/api/system/status");
   }
 
+  async containerStart(
+    endpointId: number,
+    containerId: string,
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}/start`,
+    );
+  }
+
+  async containerStop(
+    endpointId: number,
+    containerId: string,
+    timeout?: number,
+  ): Promise<unknown> {
+    const query = timeout !== undefined ? { t: String(timeout) } : undefined;
+    return this.request(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}/stop`,
+      query,
+    );
+  }
+
+  async containerRestart(
+    endpointId: number,
+    containerId: string,
+    timeout?: number,
+  ): Promise<unknown> {
+    const query = timeout !== undefined ? { t: String(timeout) } : undefined;
+    return this.request(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}/restart`,
+      query,
+    );
+  }
+
+  async containerKill(
+    endpointId: number,
+    containerId: string,
+    signal?: string,
+  ): Promise<unknown> {
+    const query = signal ? { signal } : undefined;
+    return this.request(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}/kill`,
+      query,
+    );
+  }
+
   async redeployStack(
     stackId: number,
     opts: { pullImage: boolean; prune: boolean },
@@ -341,6 +390,122 @@ export function registerPortainerTools(
       inputSchema: {},
     },
     async () => asText(await p.systemStatus()),
+  );
+
+  server.registerTool(
+    "portainer_container_start",
+    {
+      title: "Portainer: Start Container",
+      description:
+        "Start a stopped container on a Docker endpoint. Pure passthrough to Docker's POST /containers/{id}/start.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        container_id: z.string().describe("Container ID or name"),
+      },
+    },
+    async ({ endpoint_id, container_id }) => {
+      await p.containerStart(endpoint_id, container_id);
+      return asText({
+        ok: true,
+        action: "start",
+        endpoint_id,
+        container_id,
+      });
+    },
+  );
+
+  server.registerTool(
+    "portainer_container_stop",
+    {
+      title: "Portainer: Stop Container",
+      description:
+        "Stop a running container on a Docker endpoint. Sends SIGTERM and waits up to `timeout` seconds before SIGKILL (Docker default 10s if omitted).",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        container_id: z.string().describe("Container ID or name"),
+        timeout: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
+          ),
+      },
+    },
+    async ({ endpoint_id, container_id, timeout }) => {
+      await p.containerStop(endpoint_id, container_id, timeout);
+      return asText({
+        ok: true,
+        action: "stop",
+        endpoint_id,
+        container_id,
+      });
+    },
+  );
+
+  server.registerTool(
+    "portainer_container_restart",
+    {
+      title: "Portainer: Restart Container",
+      description:
+        "Restart a container on a Docker endpoint. Sends SIGTERM, waits up to `timeout` seconds, SIGKILL, then start.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        container_id: z.string().describe("Container ID or name"),
+        timeout: z
+          .number()
+          .int()
+          .min(0)
+          .optional()
+          .describe(
+            "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
+          ),
+      },
+    },
+    async ({ endpoint_id, container_id, timeout }) => {
+      await p.containerRestart(endpoint_id, container_id, timeout);
+      return asText({
+        ok: true,
+        action: "restart",
+        endpoint_id,
+        container_id,
+      });
+    },
+  );
+
+  server.registerTool(
+    "portainer_container_kill",
+    {
+      title: "Portainer: Kill Container",
+      description:
+        "Send a signal (default SIGKILL) to a container. Skips graceful shutdown — small but real risk of corrupting state mid-write. Use restart/stop unless you specifically need to bypass the entrypoint's signal handlers.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        container_id: z.string().describe("Container ID or name"),
+        signal: z
+          .string()
+          .optional()
+          .describe(
+            "Signal to send (e.g. SIGKILL, SIGTERM, SIGUSR1). Docker default SIGKILL.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge skipping graceful shutdown",
+          ),
+      },
+    },
+    async ({ endpoint_id, container_id, signal }) => {
+      await p.containerKill(endpoint_id, container_id, signal);
+      return asText({
+        ok: true,
+        action: "kill",
+        endpoint_id,
+        container_id,
+        signal: signal ?? "SIGKILL",
+      });
+    },
   );
 
   server.registerTool(

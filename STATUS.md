@@ -101,51 +101,51 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     endpoint that does pull-and-recreate for a single container —
     likely cleaner than the stack-redeploy round-trip dance for
     some use cases.
-- **First write tool landed: `portainer_redeploy_stack`.** Wraps
-  the file-based redeploy (`PUT /api/stacks/{id}`) for Compose and
-  Swarm stacks. Implements the env round-trip via the new
-  `noRedact: true` opt-out on `request<T>()` — internal GET fetches
-  the raw stack + raw file content, the PUT echoes them back with
-  `repullImageAndRedeploy: true` (the non-deprecated form per
-  Portainer 2.36+). Refuses git-managed stacks at the client layer
-  (would silently detach from git via `stack.GitConfig = nil`) and
-  refuses Kubernetes stacks (different endpoint required). Tool
-  schema requires `confirm: true` (z.literal) as a forcing function
-  so the LLM has to acknowledge the destructive intent in its tool
-  call. Tool description warns that self-redeploy of portainer-mcp
+- **First write tool landed and verified: `portainer_redeploy_stack`.**
+  Wraps the file-based redeploy (`PUT /api/stacks/{id}`) for
+  Compose and Swarm stacks. Implements the env round-trip via the
+  new `noRedact: true` opt-out on `request<T>()` — internal GET
+  fetches the raw stack + raw file content, the PUT echoes them
+  back with `repullImageAndRedeploy: true` (the non-deprecated form
+  per Portainer 2.36+). Refuses git-managed stacks at the client
+  layer (would silently detach from git via `stack.GitConfig = nil`)
+  and refuses Kubernetes stacks (different endpoint required). Tool
+  schema requires `confirm: true` (z.literal) as a forcing function.
+  Tool description warns that self-redeploy of portainer-mcp
   appears to fail because the in-flight HTTP fetch sees a
   connection drop mid-redeploy (the redeploy itself still
-  succeeds).
+  succeeds). Verified end-to-end against the live NAS 2026-04-30:
+  empty-Env smoke test (flaresolverr id 103) and live-secrets test
+  (downloader-mcp id 128) both passed — round-trip preserves real
+  env values, confirmed visually via Portainer UI.
+- **Container lifecycle tools landed:** `portainer_container_start`,
+  `portainer_container_stop`, `portainer_container_restart`,
+  `portainer_container_kill`. Pure Docker-proxy passthroughs to
+  `POST /api/endpoints/{id}/docker/containers/{id}/<action>`. Stop
+  and restart accept `?t=N` for graceful-SIGTERM-before-SIGKILL
+  timeout. Kill accepts `?signal=` and requires `confirm: true`
+  (small but real risk of corrupting state mid-write since it
+  skips graceful shutdown).
 
 ## Next
 
-- **Bootstrap the new image onto the NAS.** The `portainer_redeploy_stack`
-  tool only exists on the new image; the deployed `latest` is the
-  previous build. First redeploy must still happen via Portainer UI
-  ("Pull and redeploy" → "Re-pull image" + "Force redeploy"). After
-  that, all future redeploys can use the new tool.
-- **Smoke-test against a safe target.** Call
-  `portainer_redeploy_stack({ stack_id: 103, confirm: true })` (the
-  `flaresolverr` stack — empty Env, low blast radius). Confirm the
-  call succeeds, the new container comes up, and Env values stay
-  intact (run `portainer_get_stack` afterward — should still return
-  `Env: []`, not wiped or mangled).
-- **Add the git-stack redeploy variant** (`PUT /api/stacks/{id}/git/redeploy`).
-  Different endpoint, same wipe trap, similar tool shape. None of
-  the user's 36 stacks are git-managed today, so this is lower
-  priority — still worth shipping for completeness.
-- **Container lifecycle tools** (`restart`, `stop`, `start`, `kill`)
-  are pure Docker proxy passthroughs per the API doc — small
-  follow-up commit. No round-trip / no `noRedact` needed.
-- **Consider `portainer_recreate_container`** wrapping
-  `POST /containers/{id}/recreate` (Portainer-specific endpoint).
-  Cleaner than stack-redeploy for "update one service's image"
-  workflows. See PORTAINER-API.md. Most likely candidates:
-  `portainer_redeploy_stack` (PUT /api/stacks/{id}/git/redeploy or
-  PUT /api/stacks/{id}), `portainer_container_restart`,
-  `portainer_container_stop`, `portainer_container_start`. These are
-  write operations; treat as a separate, focused commit per the
-  CLAUDE.md "write operations" guidance.
+- **Pair: git-stack redeploy variant + `portainer_recreate_container`.**
+  - `PUT /api/stacks/{id}/git/redeploy` — different endpoint from
+    file-based redeploy, same env wipe trap, similar tool shape.
+    None of the user's 36 stacks are git-managed today, so lower
+    priority but worth shipping for completeness.
+  - `POST /containers/{id}/recreate` (Portainer-specific) — pulls
+    image and recreates a single container, preserving Config +
+    HostConfig. Cleaner than stack-redeploy for "fix one service
+    after pushing a new image" workflows.
+- **Bump deprecated GitHub Actions versions across all MCP repos.**
+  `actions/checkout@v4`, `docker/build-push-action@v5`,
+  `docker/login-action@v3`, `docker/metadata-action@v5`,
+  `docker/setup-buildx-action@v3`, `docker/setup-qemu-action@v3` —
+  GitHub flags Node 20 deprecation. Force-upgraded to Node 24 on
+  June 2 2026; Node 20 removed September 16 2026. Repos to touch:
+  portainer-mcp, plex-mcp, servarr-mcp, downloader-mcp,
+  openchronicle-mcp.
 - Add tests once a real Portainer test target is set up.
 - Consider a `portainer_deploy_stack` tool that wraps the
   string-based deploy we used by hand. Self-bootstrapping potential.
