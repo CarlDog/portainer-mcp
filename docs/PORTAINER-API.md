@@ -258,12 +258,34 @@ Affected:
 Plus `POST /api/stacks/{id}/git` does the same for `AutoUpdate` —
 omitting it drops the auto-update schedule.
 
+`PUT /api/stacks/{id}/git/redeploy` extends the wipe family — also
+unconditionally assigned:
+
+- `stack.GitConfig.ReferenceName = payload.RepositoryReferenceName` —
+  omit and the stack's branch/tag becomes the empty string (next
+  pull fails).
+- For Swarm: `stack.Option = &StackOption{Prune: payload.Prune}` —
+  omit and prune resets to `false`.
+- For K8s: `stack.Name = payload.StackName` — omit and stack name
+  becomes empty string.
+- Git auth password: special case — handler reuses the saved
+  password if `RepositoryPassword == ""` AND existing
+  `GitConfig.Authentication != nil`. Send empty password to
+  preserve the saved one (you can't read it back; responses blank
+  it on the way out).
+
 The pattern for any update tool:
 
 1. GET the stack with raw env (bypassing the secrets redactor —
    see "Redaction vs writes" below).
-2. Build the payload with the existing env merged in unchanged.
-3. PUT, sending `Env` even if the caller didn't ask to change it.
+2. Build the payload with the existing env + git config merged in
+   unchanged.
+3. PUT, sending `Env` and (for git redeploy) `RepositoryReferenceName`,
+   `RepositoryAuthentication`/`RepositoryUsername`, etc. even if
+   the caller didn't ask to change them.
+
+`PortainerClient.redeployStack` and `redeployGitStack` implement
+this pattern via the `noRedact: true` opt-out on `request<T>()`.
 
 ### Redaction vs writes — the `noRedact` pattern
 
@@ -441,7 +463,9 @@ via the host's hostname (e.g. `carldog-nas:9443`). Use
 | `portainer_container_stop`    | `POST /api/endpoints/{id}/docker/containers/{id}/stop` (optional `?t=N`)  | Graceful SIGTERM → SIGKILL after timeout            |
 | `portainer_container_restart` | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`) | Same SIGTERM/wait/SIGKILL/start as stop+start      |
 | `portainer_container_kill`    | `POST /api/endpoints/{id}/docker/containers/{id}/kill` (optional `?signal=`) | Skips graceful shutdown; requires `confirm: true`  |
+| `portainer_recreate_container`| `POST /api/docker/{id}/containers/{id}/recreate` body `{PullImage}`       | **Native handler** (NOT under the proxy tree); `confirm: true` |
 | `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`    |
+| `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true` |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 
 All requests carry `X-API-Key: <key>` as an HTTP header
@@ -459,7 +483,6 @@ relying on the shape.
 
 | Capability                              | Endpoint(s)                                                                                                                    | Risk class            |
 |-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|-----------------------|
-| Redeploy git-based stack                | `PUT /api/stacks/{id}/git/redeploy` with `{env, repullImageAndRedeploy: true, prune}` — handler requires `?endpointId`         | Medium                |
 | Start stack                             | `POST /api/stacks/{id}/start` — Swarm pulls images implicitly                                                                  | Low                   |
 | Stop stack                              | `POST /api/stacks/{id}/stop` — Swarm semantics destructive                                                                     | Medium (Swarm)        |
 | Delete stack                            | `DELETE /api/stacks/{id}?endpointId=N` — also removes ProjectPath dir + ResourceControl                                        | High                  |
@@ -471,7 +494,6 @@ relying on the shape.
 
 | Capability                  | Endpoint                                                                                | Risk class                        |
 |-----------------------------|-----------------------------------------------------------------------------------------|-----------------------------------|
-| Recreate (Portainer extra)  | `POST /api/endpoints/{id}/docker/containers/{id}/recreate` body `{PullImage: bool}`     | Medium (single-container redeploy)|
 | Delete                      | `DELETE /api/endpoints/{id}/docker/containers/{id}` (optional `?force=true&v=true`)     | High                              |
 | Stats                       | `GET /api/endpoints/{id}/docker/containers/{id}/stats?stream=false`                     | Low                               |
 | Exec one-off command        | `POST /containers/{id}/exec` then `POST /exec/{id}/start` (HTTP hijack)                 | High (LLM RCE risk)               |
