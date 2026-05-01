@@ -343,9 +343,9 @@ New tools should send `RepullImageAndRedeploy`.
 
 ### Secrets in upstream responses
 
-**Portainer does not redact env values.** Verified across the entire
-`api/http/proxy/factory/docker/` tree — no scrub of `Env`, `password`,
-`secret`, etc. The raw plaintext is forwarded.
+**Portainer does not redact env values at all.** Verified across the
+entire `api/http/proxy/factory/docker/` tree — no scrub of `Env`,
+`password`, `secret`, etc. The raw plaintext is forwarded.
 
 This applies to:
 
@@ -354,10 +354,17 @@ This applies to:
   inspect's `Config.Env: ["KEY=VALUE", ...]`
 
 Both shapes are scrubbed by our `redactSecrets` walker in
-`PortainerClient.request<T>()`. The only thing Portainer DOES sanitize
-is the git authentication password on stack responses (set to `""`
-before serialization). Don't rely on Portainer for env-secret
-hygiene — it's our problem.
+`PortainerClient.request<T>()`. The walker uses two parallel paths:
+key-name match (regex on Env entry names) AND value-shape match
+(known issuer-prefix patterns for JWT, GitHub/Stripe/Slack/AWS/
+Google/Anthropic/OpenAI tokens, PEM private keys). The value-shape
+path catches the case where the key name doesn't telegraph "secret"
+(e.g. `BOTIFY_JWT`) but the value is unmistakably one. See CLAUDE.md
+"Conventions" for the full pattern list and rationale (no generic
+entropy thresholds — they false-positive on UUIDs and container IDs).
+The only thing Portainer DOES sanitize is the git authentication
+password on stack responses (set to `""` before serialization). Don't
+rely on Portainer for env-secret hygiene — it's our problem.
 
 ### Webhooks are public
 
