@@ -474,6 +474,114 @@ export class PortainerClient {
     );
   }
 
+  async convertStackToGit(
+    sourceStackId: number,
+    spec: {
+      repositoryUrl: string;
+      referenceName?: string;
+      composePath?: string;
+      username?: string;
+      password?: string;
+      confirmName: string;
+    },
+  ): Promise<unknown> {
+    interface RawEnvEntry {
+      name?: string;
+      Name?: string;
+      value?: string;
+      Value?: string;
+    }
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: RawEnvEntry[];
+      GitConfig?: unknown;
+    }
+    // Step 1: Fetch source with raw env (noRedact) so we can carry the
+    // real secret values into the new stack's env without ever exposing
+    // them to the MCP caller.
+    const source = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${sourceStackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (source.GitConfig != null) {
+      throw new Error(
+        `Stack ${sourceStackId} (${source.Name}) is already git-managed. Use portainer_redeploy_git_stack to update it instead.`,
+      );
+    }
+    if (source.Type !== 1 && source.Type !== 2) {
+      throw new Error(
+        `Stack ${sourceStackId} (${source.Name}) has Type ${source.Type}; convert supports only Compose (2) and Swarm (1).`,
+      );
+    }
+    // Two-factor confirm: caller must spell the source stack's name.
+    if (source.Name !== spec.confirmName) {
+      throw new Error(
+        `Name mismatch: stack ${sourceStackId} is "${source.Name}", caller supplied confirm_name="${spec.confirmName}". Refusing to convert. Re-call with the correct name.`,
+      );
+    }
+    // Capture the source compose content for a recovery payload if the
+    // create step fails after delete. Best-effort — proceed if it fails.
+    let composeContent = "";
+    try {
+      const file = await this.request<{ StackFileContent: string }>(
+        "GET",
+        `/api/stacks/${sourceStackId}/file`,
+        undefined,
+        undefined,
+        { noRedact: true },
+      );
+      composeContent = file.StackFileContent;
+    } catch {
+      // Recovery payload will lack compose content; tolerable.
+    }
+    // Snapshot what we need before delete.
+    const sourceName = source.Name;
+    const sourceEndpoint = source.EndpointId;
+    const sourceEnv: Array<{ name: string; value: string }> = (
+      source.Env ?? []
+    ).map((e) => ({
+      name: (e.name ?? e.Name ?? "") as string,
+      value: (e.value ?? e.Value ?? "") as string,
+    }));
+    // Step 2: Delete source. This frees the name so we can create the
+    // new git-managed stack with the same Name (preserving any external
+    // references like Claude Desktop's MCP config that targets the
+    // stack's published port).
+    await this.request("DELETE", `/api/stacks/${sourceStackId}`, {
+      endpointId: String(sourceEndpoint),
+    });
+    // Step 3: Create the git-managed replacement with the captured env.
+    try {
+      return await this.createGitStack(sourceEndpoint, {
+        name: sourceName,
+        repositoryUrl: spec.repositoryUrl,
+        referenceName: spec.referenceName,
+        composePath: spec.composePath,
+        env: sourceEnv,
+        username: spec.username,
+        password: spec.password,
+      });
+    } catch (createErr) {
+      // Recovery payload — env keys only (NEVER values; we don't want
+      // secrets landing in tool-call logs even on the failure path).
+      // Compose content is included so the user can recreate the
+      // file-based stack manually via portainer_create_stack and re-add
+      // the env values via the Portainer UI.
+      const envKeys = sourceEnv.map((e) => e.name).join(", ");
+      const origMsg =
+        createErr instanceof Error ? createErr.message : String(createErr);
+      throw new Error(
+        `Conversion failed AFTER source stack was deleted. The source stack "${sourceName}" (id ${sourceStackId}) on endpoint ${sourceEndpoint} no longer exists. To recover: re-run portainer_create_stack with name="${sourceName}", endpoint_id=${sourceEndpoint}, the compose YAML below, then re-add the env vars [${envKeys}] via the Portainer UI (their values are NOT included in this message — they remain protected). Original create error: ${origMsg}\n\n--- ORIGINAL COMPOSE YAML ---\n${composeContent}\n--- END COMPOSE YAML ---`,
+      );
+    }
+  }
+
   async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
     // Two-factor confirmation: the stack id has to resolve to a stack
     // whose Name matches the caller's confirmName. Catches "wrong stack
@@ -955,6 +1063,79 @@ export function registerPortainerTools(
           env,
           username,
           password,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_convert_stack_to_git",
+    {
+      title: "Portainer: Convert File-Based Stack to Git-Managed",
+      description:
+        "Convert an existing file-based Compose/Swarm stack into a git-managed one in one atomic operation. Reads the source stack's real env (including secret values, server-side, never exposed to tool-call logs), deletes the source, then creates a new git-managed stack with the same name and endpoint, inheriting the env. Requires two-factor confirm: confirm: true AND confirm_name matching the source stack's actual Name. ATOMICITY RISK: the delete happens before the create. If the create fails (bad repo URL, malformed compose at HEAD, network issue), the source is gone and the error includes a recovery payload with the original compose YAML + the env key NAMES so you can rebuild via portainer_create_stack and re-add env values via the Portainer UI. NEW STACK USES THE REPO'S COMPOSE — if the repo's docker-compose.yml differs from the source's (different ports, volumes, etc.), the new stack picks up the repo's values. SELF-CONVERSION WARNING: do not run this against the portainer-mcp stack itself — the call dies mid-flight when portainer-mcp is killed.",
+      inputSchema: {
+        source_stack_id: z
+          .number()
+          .int()
+          .describe("ID of the existing file-based stack to convert"),
+        repository_url: z
+          .string()
+          .url()
+          .describe(
+            "Git repository URL providing the new stack's compose (e.g. https://github.com/user/repo). HTTPS only.",
+          ),
+        reference: z
+          .string()
+          .optional()
+          .describe("Git reference to deploy from. Default: refs/heads/main."),
+        compose_path: z
+          .string()
+          .optional()
+          .describe(
+            "Path to the compose file within the repo. Default: docker-compose.yml.",
+          ),
+        username: z
+          .string()
+          .optional()
+          .describe(
+            "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works.",
+          ),
+        password: z
+          .string()
+          .optional()
+          .describe(
+            "Git auth password / PAT (private repos only). Visible in tool-call logs — use a scoped read-only token.",
+          ),
+        confirm_name: z
+          .string()
+          .min(1)
+          .describe(
+            "Must exactly match the source stack's Name. Two-factor confirm.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive (delete-then-create) operation",
+          ),
+      },
+    },
+    async ({
+      source_stack_id,
+      repository_url,
+      reference,
+      compose_path,
+      username,
+      password,
+      confirm_name,
+    }) =>
+      asText(
+        await p.convertStackToGit(source_stack_id, {
+          repositoryUrl: repository_url,
+          referenceName: reference,
+          composePath: compose_path,
+          username,
+          password,
+          confirmName: confirm_name,
         }),
       ),
   );
