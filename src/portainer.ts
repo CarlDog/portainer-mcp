@@ -421,6 +421,59 @@ export class PortainerClient {
     );
   }
 
+  async createGitStack(
+    endpointId: number,
+    spec: {
+      name: string;
+      repositoryUrl: string;
+      referenceName?: string;
+      composePath?: string;
+      env?: Array<{ name: string; value: string }>;
+      username?: string;
+      password?: string;
+    },
+  ): Promise<unknown> {
+    // Same pre-flight name-collision check as createStack — refuse if any
+    // stack on this endpoint already shares the name. Catches the silent
+    // Swarm-stack nuke trap and prevents accidental overwrites.
+    interface RawStackSummary {
+      Name: string;
+      EndpointId: number;
+    }
+    const existing = await this.request<RawStackSummary[]>(
+      "GET",
+      "/api/stacks",
+      { filters: JSON.stringify({ EndpointId: endpointId }) },
+    );
+    if (existing.find((s) => s.Name === spec.name)) {
+      throw new Error(
+        `Stack "${spec.name}" already exists on endpoint ${endpointId}. Refusing to create — use portainer_redeploy_git_stack to update an existing git stack, or portainer_delete_stack first if you really want to recreate from scratch.`,
+      );
+    }
+    const body: Record<string, unknown> = {
+      Name: spec.name,
+      RepositoryURL: spec.repositoryUrl,
+      RepositoryReferenceName: spec.referenceName ?? "refs/heads/main",
+      ComposeFile: spec.composePath ?? "docker-compose.yml",
+      Env: spec.env ?? [],
+    };
+    // Only set the auth fields if either credential was provided. Public
+    // repos don't need them; passing empty strings would still flip
+    // RepositoryAuthentication=true and could confuse Portainer's
+    // internal credential resolution.
+    if (spec.username !== undefined || spec.password !== undefined) {
+      body.RepositoryAuthentication = true;
+      body.RepositoryUsername = spec.username ?? "";
+      body.RepositoryPassword = spec.password ?? "";
+    }
+    return this.request(
+      "POST",
+      "/api/stacks/create/standalone/repository",
+      { endpointId: String(endpointId) },
+      body,
+    );
+  }
+
   async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
     // Two-factor confirmation: the stack id has to resolve to a stack
     // whose Name matches the caller's confirmName. Catches "wrong stack
@@ -818,6 +871,90 @@ export function registerPortainerTools(
           name,
           composeContent: compose,
           env,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_create_git_stack",
+    {
+      title: "Portainer: Create Git-Managed Stack",
+      description:
+        "Create a new git-managed standalone Compose stack — Portainer clones the repo at the specified ref and deploys the compose file from inside it. Future redeploys via portainer_redeploy_git_stack will pull the latest commit. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint. SECURITY NOTE: the password parameter (PAT/token for private repos) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate.",
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe("Stack name. Must be unique on the endpoint."),
+        endpoint_id: z
+          .number()
+          .int()
+          .describe("Endpoint ID where the stack should be deployed"),
+        repository_url: z
+          .string()
+          .url()
+          .describe(
+            "Git repository URL (e.g. https://github.com/user/repo). HTTPS only — SSH not supported via this endpoint.",
+          ),
+        reference: z
+          .string()
+          .optional()
+          .describe(
+            "Git reference to deploy from (e.g. refs/heads/main, refs/tags/v1.0). Default: refs/heads/main.",
+          ),
+        compose_path: z
+          .string()
+          .optional()
+          .describe(
+            "Path to the compose file within the repo. Default: docker-compose.yml.",
+          ),
+        env: z
+          .array(
+            z.object({
+              name: z.string(),
+              value: z.string(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Stack-level environment variables for ${VAR} substitution in the compose file.",
+          ),
+        username: z
+          .string()
+          .optional()
+          .describe(
+            "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token').",
+          ),
+        password: z
+          .string()
+          .optional()
+          .describe(
+            "Git auth password / Personal Access Token (private repos only). Visible in tool-call logs — use a scoped read-only token.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe("Must be exactly true to acknowledge creating a new stack"),
+      },
+    },
+    async ({
+      name,
+      endpoint_id,
+      repository_url,
+      reference,
+      compose_path,
+      env,
+      username,
+      password,
+    }) =>
+      asText(
+        await p.createGitStack(endpoint_id, {
+          name,
+          repositoryUrl: repository_url,
+          referenceName: reference,
+          composePath: compose_path,
+          env,
+          username,
+          password,
         }),
       ),
   );
