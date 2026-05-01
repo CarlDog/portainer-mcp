@@ -159,6 +159,26 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   "wrong stack id" disasters where the LLM picked the wrong number.
   Both tools require `confirm: true`. Endpoint id for delete is
   derived from the stack record (no need to expose it as input).
+- **`recreate_container` quirk fixed:** the Portainer recreate
+  endpoint 500s with "endpoint not found" if given a container
+  name (or any short ID) — its internal network-disconnect step
+  requires the canonical 64-char Docker ID. `recreateContainer`
+  now does an inspect-first to resolve any caller-provided ref
+  to the full ID before calling recreate. ~50ms extra latency,
+  but the tool now Just Works regardless of input shape.
+  PORTAINER-API.md gotcha section documents both this quirk and
+  the cosmetic `-old` Name suffix that Portainer leaves on the
+  recreate response.
+- **Git-managed stack creation landed: `portainer_create_git_stack`.**
+  Wraps `POST /api/stacks/create/standalone/repository?endpointId=N`.
+  Closes the create symmetry — we now have file+git create + file+git
+  redeploy + delete. Inputs: name, endpoint_id, repository_url,
+  optional reference (default `refs/heads/main`), compose_path
+  (default `docker-compose.yml`), env, and optional username/password
+  for private repos (PAT visible in tool-call logs — caveat in tool
+  description). Same pre-flight name-collision check as create_stack.
+  Enables fully MCP-driven conversion of file-based stacks to
+  git-managed (delete + create_git_stack) without leaving Claude.
 
 ## Next
 
@@ -167,19 +187,24 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   variants — that's the path most likely to silently corrupt state.
 - Smoke-test the new tools against the live NAS once the new image
   ships:
-  - `portainer_recreate_container` against a low-stakes container
-    (e.g. `flaresolverr` on endpoint 2). Verify it pulls the image
-    and recreates with same config.
-  - `portainer_redeploy_git_stack` — none of the user's 36 stacks
-    are currently git-managed, so this needs a deliberate test
-    setup (create a git stack, redeploy it, confirm git config
-    survives).
-  - `portainer_create_stack` — try a tiny throwaway stack
-    (e.g. busybox sleep), confirm it lands and is visible in
-    Portainer UI, then `portainer_delete_stack` it.
-- Consider extending `portainer_create_stack` to also support
-  Swarm and git-method (repository) variants. Lower priority —
-  not needed for current workflows.
+  - `portainer_create_git_stack` + `portainer_redeploy_git_stack` —
+    convert plex-mcp from file-based to git-managed (delete +
+    create_git_stack pointing at github.com/CarlDog/plex-mcp), then
+    redeploy via the git tool. Confirms env round-trip preserves
+    real secrets and git config survives.
+  - `portainer_recreate_container` smoke-tested 2026-04-30 (busybox
+    in mcp-smoketest stack); the by-name failure mode is now fixed.
+  - `portainer_create_stack` smoke-tested 2026-04-30 (mcp-smoketest
+    create + delete via tools end-to-end).
+- Lower priority backlog (covered in PORTAINER-API.md "haven't
+  built yet"):
+  - `portainer_stack_start` / `portainer_stack_stop` (stack-level
+    lifecycle — different from per-container start/stop)
+  - `portainer_image_pull` / `_image_list` / `_image_inspect`
+  - `portainer_endpoint_inspect` (cheap pre-flight guard for
+    write tools)
+  - `portainer_system_version` (richer than system_status when
+    authenticated)
 
 ## Open Decisions
 
