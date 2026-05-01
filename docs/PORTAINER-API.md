@@ -439,6 +439,47 @@ Compose/Swarm update writes the new compose file in-place with a
 can leave a `.bak` orphan. Worth knowing for debugging stale stack
 state.
 
+### `POST /containers/{id}/recreate` requires the full container ID
+
+Empirically verified 2026-04-30 against a busybox compose container.
+Calling recreate with the container's **name** (e.g.
+`mcp-smoketest-smoketest-1`) returns:
+
+```
+500: Error recreating container — Disconnect network from old container
+error: Error response from daemon: endpoint <name> not found
+```
+
+The Portainer recreate flow disconnects the old container from its
+networks before swapping; that disconnect call uses the container ID
+even though the inspect/lookup that preceded it accepted the name.
+Result: name lookups partially succeed, then fail mid-flight with
+a misleading "endpoint not found" error.
+
+**Always pass the full 64-char Docker ID to recreate.** Tools that
+accept either ID or name everywhere else (start/stop/restart/kill/inspect)
+need to resolve to ID before invoking recreate.
+
+`PortainerClient.recreateContainer` works around this by doing a
+`GET /containers/{ref}/json` first to resolve any name-or-prefix
+input to the canonical full ID, then calling recreate. ~50ms of
+extra latency for the inspect, but the caller can pass any
+container reference Docker accepts and the tool just works.
+
+### `POST /containers/{id}/recreate` response Name has `-old` suffix
+
+The inspect JSON returned by recreate has the new container's `Id`,
+fresh `StartedAt`, and the original Config — but its `Name` field
+ends in `-old` (e.g. `/mcp-smoketest-smoketest-1-old`). The actual
+running container in Docker has the original name; the `-old` is
+left over from Portainer's rename-then-swap implementation and never
+gets cleaned up in the response shape.
+
+If a tool surfaces the recreate response to the caller, prefer
+fetching the new container by ID via `portainer_get_container`
+afterward to get the canonical Name. Don't rely on the recreate
+response's Name field.
+
 ### Container DNS — host can't see its own hostname
 
 Standard rule (already covered in [CLAUDE.md](../CLAUDE.md) and the

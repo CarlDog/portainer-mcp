@@ -349,7 +349,7 @@ export class PortainerClient {
 
   async recreateContainer(
     endpointId: number,
-    containerId: string,
+    containerRef: string,
     opts: { pullImage: boolean },
   ): Promise<unknown> {
     // Note: this is a Portainer-NATIVE handler (not under the Docker proxy
@@ -359,9 +359,20 @@ export class PortainerClient {
     // passthroughs; recreate is a Portainer composition that pulls the
     // image, stops + removes the old container, and recreates with the
     // same Config + HostConfig.
+    //
+    // Inspect-first to resolve the caller's ref (name, short ID, or full ID)
+    // to the canonical 64-char Docker ID. The recreate flow internally
+    // disconnects the old container from its networks; that disconnect call
+    // requires the full ID and 500s with a misleading "endpoint not found"
+    // when given anything else. See PORTAINER-API.md gotcha
+    // "POST /containers/{id}/recreate requires the full container ID".
+    const resolved = await this.request<{ Id: string }>(
+      "GET",
+      `/api/endpoints/${endpointId}/docker/containers/${containerRef}/json`,
+    );
     return this.request(
       "POST",
-      `/api/docker/${endpointId}/containers/${containerId}/recreate`,
+      `/api/docker/${endpointId}/containers/${resolved.Id}/recreate`,
       undefined,
       { PullImage: opts.pullImage },
     );
