@@ -197,6 +197,20 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   repo's compose for the new stack (not the source's), so any
   port/volume divergence between source and repo is intentional.
   Refuses self-conversion of portainer-mcp (would die mid-call).
+- **Programmatic env management: `portainer_set_stack_env`.**
+  Add, update, or remove env vars on an existing stack without
+  going through the Portainer UI. Auto-detects file-based vs
+  git-managed and routes to the matching update endpoint, applying
+  the caller's `set` (upsert) and `remove` ops to the existing env
+  read with noRedact. Triggers a synchronous redeploy because
+  Portainer can't change container env without restart, but does
+  NOT pull a new image by default (env-only intent — `pull_image`
+  defaults to false). Allows secret-pattern key names (e.g.
+  PLEX_TOKEN, *_API_KEY) — the tool description warns that values
+  passed in `set` appear in tool-call logs, but no other path
+  exists for programmatically setting secrets. Closes the gap
+  flagged from another session: env additions previously needed
+  the Portainer UI.
 
 ## Next
 

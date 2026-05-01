@@ -582,6 +582,131 @@ export class PortainerClient {
     }
   }
 
+  async setStackEnv(
+    stackId: number,
+    changes: {
+      set?: Array<{ name: string; value: string }>;
+      remove?: string[];
+      pullImage?: boolean;
+    },
+  ): Promise<unknown> {
+    const setCount = changes.set?.length ?? 0;
+    const removeCount = changes.remove?.length ?? 0;
+    if (setCount === 0 && removeCount === 0) {
+      throw new Error(
+        "set_stack_env requires at least one entry in `set` or `remove`. Refusing no-op call.",
+      );
+    }
+    interface RawEnvEntry {
+      name?: string;
+      Name?: string;
+      value?: string;
+      Value?: string;
+    }
+    interface RawAuth {
+      Username?: string;
+      AuthorizationType?: number;
+    }
+    interface RawGitConfig {
+      ReferenceName?: string;
+      Authentication?: RawAuth | null;
+    }
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: RawEnvEntry[];
+      GitConfig?: RawGitConfig | null;
+      Option?: { Prune?: boolean } | null;
+    }
+    // Fetch the stack with raw env so we can read existing secret values
+    // and merge the caller's changes without clobbering them.
+    const stack = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${stackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (stack.Type !== 1 && stack.Type !== 2) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; set_stack_env supports only Compose (2) and Swarm (1).`,
+      );
+    }
+    // Normalize current env to lowercase {name, value} (Portainer returns
+    // lowercase for /stacks endpoints — see scrubEnvArray for the same
+    // dual-case handling).
+    const currentEnv: Array<{ name: string; value: string }> = (
+      stack.Env ?? []
+    ).map((e) => ({
+      name: (e.name ?? e.Name ?? "") as string,
+      value: (e.value ?? e.Value ?? "") as string,
+    }));
+    // Apply remove first.
+    const removeSet = new Set(changes.remove ?? []);
+    const newEnv = currentEnv.filter((e) => !removeSet.has(e.name));
+    // Apply set (upsert — overwrite by name, otherwise append).
+    for (const entry of changes.set ?? []) {
+      const idx = newEnv.findIndex((e) => e.name === entry.name);
+      if (idx >= 0) {
+        newEnv[idx] = entry;
+      } else {
+        newEnv.push(entry);
+      }
+    }
+    // Detect file-based vs git-managed and route to the matching update
+    // endpoint. Both trigger a synchronous redeploy because Portainer
+    // can't change container env without restart, but neither pulls a
+    // new image unless pullImage is true (env-only intent default).
+    if (stack.GitConfig != null) {
+      const auth = stack.GitConfig.Authentication;
+      const payload: Record<string, unknown> = {
+        // Round-trip the git config wipe-trap fields per
+        // PORTAINER-API.md "Env round-trip" gotcha.
+        repositoryReferenceName: stack.GitConfig.ReferenceName ?? "",
+        env: newEnv,
+        repullImageAndRedeploy: changes.pullImage ?? false,
+        prune: stack.Option?.Prune ?? false,
+        repositoryAuthentication: auth != null,
+      };
+      if (auth != null) {
+        payload.repositoryUsername = auth.Username ?? "";
+        // Empty password — Portainer reuses saved password if existing
+        // GitConfig.Authentication is set.
+        payload.repositoryPassword = "";
+        if (auth.AuthorizationType !== undefined) {
+          payload.repositoryAuthorizationType = auth.AuthorizationType;
+        }
+      }
+      return this.request(
+        "PUT",
+        `/api/stacks/${stackId}/git/redeploy`,
+        { endpointId: String(stack.EndpointId) },
+        payload,
+      );
+    }
+    // File-based path: need to also round-trip the compose content.
+    const file = await this.request<{ StackFileContent: string }>(
+      "GET",
+      `/api/stacks/${stackId}/file`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    return this.request(
+      "PUT",
+      `/api/stacks/${stackId}`,
+      { endpointId: String(stack.EndpointId) },
+      {
+        stackFileContent: file.StackFileContent,
+        env: newEnv,
+        repullImageAndRedeploy: changes.pullImage ?? false,
+        prune: false,
+      },
+    );
+  }
+
   async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
     // Two-factor confirmation: the stack id has to resolve to a stack
     // whose Name matches the caller's confirmName. Catches "wrong stack
@@ -1136,6 +1261,54 @@ export function registerPortainerTools(
           username,
           password,
           confirmName: confirm_name,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_set_stack_env",
+    {
+      title: "Portainer: Set / Remove Stack Env Variables",
+      description:
+        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart, but does NOT pull a new image by default (env-only intent — set pull_image=true to also pull). At least one of `set` or `remove` is required. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID"),
+        set: z
+          .array(
+            z.object({
+              name: z.string().min(1),
+              value: z.string(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Env entries to add or update. If a `name` already exists in the stack's env, the value is overwritten; otherwise it's appended.",
+          ),
+        remove: z
+          .array(z.string().min(1))
+          .optional()
+          .describe(
+            "Env variable names to remove from the stack. Names not present in the existing env are silently ignored.",
+          ),
+        pull_image: z
+          .boolean()
+          .optional()
+          .describe(
+            "Pull the latest image as part of the redeploy (default false — env-only intent). Set true if you want to combine an env change with an image refresh.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge that containers will be restarted",
+          ),
+      },
+    },
+    async ({ stack_id, set, remove, pull_image }) =>
+      asText(
+        await p.setStackEnv(stack_id, {
+          set,
+          remove,
+          pullImage: pull_image,
         }),
       ),
   );
