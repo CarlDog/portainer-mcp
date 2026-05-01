@@ -612,3 +612,13 @@ to a Claude-driven workflow.
   the tool. If a specific scripted exec workflow becomes valuable,
   build a narrow tool around the specific command, not a general
   exec wrapper.
+- **Credential-mutation tools that take a password as input** —
+  registry credential update (`PUT /api/registries/{id}` with
+  `password`), named git credential create/update
+  (`POST/PUT /api/gitcredentials/...`). Deliberately UI-only ops
+  per the design principle in CLAUDE.md "Conventions" → secrets in
+  tool inputs, and STATUS.md "Design Principles" — the value would
+  transit the conversation transcript and be more durable there
+  than in the Portainer UI's session-scoped form state. Pure
+  read/inspect/delete tools on these surfaces would be fine
+  (no secret transit); add when there's a concrete need.

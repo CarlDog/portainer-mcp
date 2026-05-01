@@ -155,6 +155,22 @@ docker build -t portainer-mcp .
   surface. Use stack-level env vars + `${VAR}` references in compose
   to stay covered. See STATUS.md Known Gaps.
 
+- **Secrets in tool INPUTS, not just outputs.** The redactor above
+  protects responses Portainer returns to us; it does NOT protect
+  secrets the user passes INTO tools as parameters. Three existing
+  tools accept a credential param (`portainer_set_git_auth`,
+  `portainer_create_git_stack`, `portainer_convert_stack_to_git` —
+  all take an optional `password` for git auth). Anything passed to
+  these lands in the conversation transcript, tool-call log, and any
+  session persistence (Claude Desktop history, OpenChronicle, etc.).
+  The Portainer UI's password field is more ephemeral than chat.
+  Therefore: **prefer the Portainer UI for credential rotation**,
+  use these tools sparingly with scoped easy-to-rotate PATs, and
+  **don't add new tools that take secrets as input by default**
+  (e.g. registry credential update, named git credential CRUD —
+  keep those as UI operations). See STATUS.md "Design Principles"
+  for the full reasoning.
+
 ## Self-signed certs
 
 Home Portainer setups commonly use self-signed certs on port 9443.

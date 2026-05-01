@@ -252,6 +252,34 @@ None active. Decisions made during scaffolding:
   added HTTP later), portainer-mcp ships dual-transport from the start
   since the pattern is now proven.
 
+## Design Principles
+
+- **Secrets that the user must supply belong in the Portainer UI, not
+  in tool inputs.** Tools that accept a `password`/`token`/`pat`
+  parameter cause the value to land in the conversation transcript,
+  tool-call log, and any session-history persistence (Claude Desktop
+  history, OpenChronicle, etc.). The Portainer UI's password field is
+  more ephemeral by comparison — browser session, in-memory form
+  state, gone on refresh. We have three tools today that accept
+  credentials as input (`portainer_set_git_auth`,
+  `portainer_create_git_stack`, `portainer_convert_stack_to_git`)
+  and they remain available because the convenience is real for
+  initial setup. But:
+  - **Use them sparingly and with scoped, easy-to-rotate PATs.**
+  - **Prefer the Portainer UI for credential rotation** — the entry
+    surface is more transient than chat.
+  - **Do not add new tools that take secrets as input by default.**
+    Specifically: registry credential update, named git credential
+    create/update, etc. should remain UI-only operations.
+  - **Pure read/inspect/delete tools that touch credential records
+    are fine** — they don't transit secret values.
+
+  Logged 2026-05-01 after a session-end audit caught the gloss-over
+  in proposing `portainer_update_registry`. Future write tools that
+  need server-side secret handling should explore alternatives like
+  named-credential references or stored-secret pointers, NOT raw
+  password parameters.
+
 ## Known Gaps
 
 - **Inline secrets in compose YAML are not redacted.**
