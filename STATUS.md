@@ -275,6 +275,23 @@ None active. Decisions made during scaffolding:
   too many false positives on UUIDs, content hashes, and Docker
   container IDs that the LLM legitimately needs to read. Acceptable
   trade-off given the issuer-prefix coverage.
+- **No MCP tool to add or update git auth on an existing
+  git-managed stack.** The stack record's `GitConfig.Authentication`
+  starts at `null` for a stack created via `portainer_create_git_stack`
+  without `username`+`password` (e.g. while the source repo is
+  public). If the user later flips the repo private, the stack
+  needs git auth populated before the next redeploy or git clone
+  401s. `portainer_redeploy_git_stack` round-trips existing auth
+  but doesn't accept new auth params. `portainer_convert_stack_to_git`
+  refuses git→git on purpose. Workaround: edit git config via the
+  Portainer UI (Stacks → \<stack\> → Git config → enable
+  Authentication → username + PAT). Future tool options: either a
+  new `portainer_set_git_auth` wrapping `POST /api/stacks/{id}/git`
+  (which has env+autoupdate wipe traps that need round-tripping per
+  PORTAINER-API.md), OR loosen `convert_stack_to_git` to allow
+  git→git re-conversion (carries env via noRedact like file→git
+  does today). Logged 2026-05-01 during the botify-mcp private-flip
+  scoping discussion.
 - **`portainer_convert_stack_to_git` doesn't clean up orphan
   containers from a failed create.** When the create-from-git step
   fails after the source stack has already been deleted, Portainer's
