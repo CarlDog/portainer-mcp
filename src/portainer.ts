@@ -620,6 +620,77 @@ export class PortainerClient {
     }
   }
 
+  async setGitAuth(
+    stackId: number,
+    spec: { username: string; password: string } | { remove: true },
+  ): Promise<unknown> {
+    interface RawAuth {
+      Username?: string;
+      AuthorizationType?: number;
+    }
+    interface RawGitConfig {
+      ReferenceName?: string;
+      TLSSkipVerify?: boolean;
+      Authentication?: RawAuth | null;
+    }
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: unknown[];
+      GitConfig?: RawGitConfig | null;
+      AutoUpdate?: unknown;
+    }
+    // Fetch raw stack so we can round-trip env (wipe trap on this
+    // endpoint per PORTAINER-API.md) and existing AutoUpdate config
+    // (also a wipe trap — handler does `stack.AutoUpdate = payload.AutoUpdate`
+    // unconditional). noRedact required to preserve secret env values.
+    const stack = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${stackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (stack.GitConfig == null) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) is not git-managed. set_git_auth only applies to git-managed stacks (use convert_stack_to_git first if you want to make a file-based stack git-managed).`,
+      );
+    }
+    if (stack.Type !== 1 && stack.Type !== 2) {
+      throw new Error(
+        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; set_git_auth supports only Compose (2) and Swarm (1).`,
+      );
+    }
+    // Round-trip the wipe-trap fields from existing config. Empty
+    // string for ReferenceName would silently blank the git ref.
+    const payload: Record<string, unknown> = {
+      env: stack.Env ?? [],
+      autoUpdate: stack.AutoUpdate ?? null,
+      repositoryReferenceName: stack.GitConfig.ReferenceName ?? "",
+      tlsSkipVerify: stack.GitConfig.TLSSkipVerify ?? false,
+    };
+    if ("remove" in spec && spec.remove) {
+      // RepositoryAuthentication=false makes the handler set
+      // stack.GitConfig.Authentication = nil, wiping any saved creds.
+      payload.repositoryAuthentication = false;
+    } else if ("username" in spec) {
+      payload.repositoryAuthentication = true;
+      payload.repositoryUsername = spec.username;
+      payload.repositoryPassword = spec.password;
+      // Default AuthorizationType is Basic (0) — covers GitHub PAT
+      // (paste PAT as password, any non-empty username works).
+    }
+    // Endpoint required per the handler (passes `true` to RetrieveNumericQueryParameter)
+    return this.request(
+      "POST",
+      `/api/stacks/${stackId}/git`,
+      { endpointId: String(stack.EndpointId) },
+      payload,
+    );
+  }
+
   async setStackEnv(
     stackId: number,
     changes: {
@@ -1301,6 +1372,58 @@ export function registerPortainerTools(
           confirmName: confirm_name,
         }),
       ),
+  );
+
+  server.registerTool(
+    "portainer_set_git_auth",
+    {
+      title: "Portainer: Set / Remove Git Authentication on a Stack",
+      description:
+        "Add, update, or remove git authentication credentials on an existing git-managed stack — without triggering a redeploy. Use this BEFORE flipping a public source repo to private so subsequent deploys can clone it. Pass username + password to set credentials; pass remove: true to wipe existing credentials. Round-trips the stack's existing env (via noRedact) and AutoUpdate config to avoid Portainer's wipe traps on this endpoint. SECURITY NOTE: the password parameter (PAT / git password) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate. After setting auth, do a portainer_redeploy_git_stack to actually exercise the new credentials.",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID"),
+        username: z
+          .string()
+          .min(1)
+          .optional()
+          .describe(
+            "Git auth username. For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token' or your GitHub login). Required unless remove=true.",
+          ),
+        password: z
+          .string()
+          .optional()
+          .describe(
+            "Git auth password / Personal Access Token. Visible in tool-call logs — use a scoped read-only token. Required unless remove=true.",
+          ),
+        remove: z
+          .boolean()
+          .optional()
+          .describe(
+            "If true, removes existing git authentication from the stack (wipes saved username + password server-side). When set, omit username and password.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge writing/clearing stored git credentials",
+          ),
+      },
+    },
+    async ({ stack_id, username, password, remove }) => {
+      if (remove === true) {
+        if (username !== undefined || password !== undefined) {
+          throw new Error(
+            "set_git_auth: when remove=true, do not pass username or password.",
+          );
+        }
+        return asText(await p.setGitAuth(stack_id, { remove: true }));
+      }
+      if (username === undefined || password === undefined) {
+        throw new Error(
+          "set_git_auth: both username and password are required (unless remove=true).",
+        );
+      }
+      return asText(await p.setGitAuth(stack_id, { username, password }));
+    },
   );
 
   server.registerTool(

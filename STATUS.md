@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-04-29
+**Last updated:** 2026-05-01
 
 ## Phase
 
@@ -275,23 +275,19 @@ None active. Decisions made during scaffolding:
   too many false positives on UUIDs, content hashes, and Docker
   container IDs that the LLM legitimately needs to read. Acceptable
   trade-off given the issuer-prefix coverage.
-- **No MCP tool to add or update git auth on an existing
-  git-managed stack.** The stack record's `GitConfig.Authentication`
-  starts at `null` for a stack created via `portainer_create_git_stack`
-  without `username`+`password` (e.g. while the source repo is
-  public). If the user later flips the repo private, the stack
-  needs git auth populated before the next redeploy or git clone
-  401s. `portainer_redeploy_git_stack` round-trips existing auth
-  but doesn't accept new auth params. `portainer_convert_stack_to_git`
-  refuses git→git on purpose. Workaround: edit git config via the
-  Portainer UI (Stacks → \<stack\> → Git config → enable
-  Authentication → username + PAT). Future tool options: either a
-  new `portainer_set_git_auth` wrapping `POST /api/stacks/{id}/git`
-  (which has env+autoupdate wipe traps that need round-tripping per
-  PORTAINER-API.md), OR loosen `convert_stack_to_git` to allow
-  git→git re-conversion (carries env via noRedact like file→git
-  does today). Logged 2026-05-01 during the botify-mcp private-flip
-  scoping discussion.
+- ~~No MCP tool to add or update git auth on an existing
+  git-managed stack.~~ **Closed by `portainer_set_git_auth`
+  (2026-05-01).** Wraps `POST /api/stacks/{id}/git` with the
+  required env + AutoUpdate + ReferenceName + TLSSkipVerify
+  round-trips so the wipe traps on that endpoint don't bite. Two
+  modes: pass `username` + `password` to set auth, or
+  `remove: true` to wipe stored creds. Does NOT trigger a redeploy
+  — pair with `portainer_redeploy_git_stack` to actually exercise
+  the new credentials. Unblocks the botify private-flip workflow:
+  set git auth on the stack while the repo is still public, then
+  flip private and redeploy. Same caveat as other tools that
+  accept secrets in input: the `password` parameter is visible in
+  tool-call logs, so use a scoped read-only PAT.
 - **`portainer_convert_stack_to_git` doesn't clean up orphan
   containers from a failed create.** When the create-from-git step
   fails after the source stack has already been deleted, Portainer's
