@@ -264,16 +264,42 @@ None active. Decisions made during scaffolding:
   value in stack-level env vars, which is the recommended Portainer
   pattern and what the redactor covers. Reliable YAML scrubbing is a
   much bigger lift; deferring until there's a concrete need.
-- Redaction is **key-based, not value-based.** A high-entropy string
-  stored under a key that doesn't match the pattern (e.g. `BUILD_ID`,
-  `INSTANCE_ARN`) is still passed through. This is intentional —
-  matching by value would have to choose between aggressive heuristics
-  (false positives on long IDs/UUIDs) or ML-style entropy (overkill).
-  Known acceptable trade-off for v1.
-- No regression test for the redactor yet. Add when test infra
-  lands; the cases to cover are `/api/stacks`, `/api/stacks/{id}`,
-  and the container-inspect proxy path
-  (`/api/endpoints/{id}/docker/containers/{id}/json`).
+- Redactor coverage is **key-based + issuer-prefix value-based, NOT
+  generic entropy.** Both detection paths are now live (see CLAUDE.md
+  "Conventions" for the pattern list). A high-entropy opaque string
+  stored under a key that doesn't match the pattern AND whose value
+  doesn't match a known issuer prefix (e.g. a custom 64-char API
+  token your in-house service mints with no recognizable prefix)
+  would still pass through. Adding generic entropy/length thresholds
+  was rejected as Strategy B during the 2026-04-30 design pass —
+  too many false positives on UUIDs, content hashes, and Docker
+  container IDs that the LLM legitimately needs to read. Acceptable
+  trade-off given the issuer-prefix coverage.
+- **`portainer_convert_stack_to_git` doesn't clean up orphan
+  containers from a failed create.** When the create-from-git step
+  fails after the source stack has already been deleted, Portainer's
+  compose deploy may have already created (but not started)
+  containers from the repo's compose file. The error path emits a
+  recovery payload with the original compose YAML + env key names
+  so the user can rebuild via `portainer_create_stack`, but does
+  NOT issue `docker compose down --remove-orphans` for the failed
+  project. Result: half-created containers from the failed deploy
+  linger and re-attach to the recovered stack via project label.
+  Surfaced empirically 2026-05-01 during the openchronicle-mcp
+  convert (the OC repo's `docker-compose.yml` has 4 services where
+  the deployed file-based version had only 2; bind-mount on
+  `./plugins` failed; 2 orphan containers remained). User cleanup
+  via Portainer UI's container Remove. Future enhancement: emit
+  the orphan cleanup as part of the convert error path.
+- No regression test for the redactor yet committed. Two smoke
+  tests have been hand-run: the original key-only check (6
+  fixtures, 2026-04-29) and the value-shape enhancement (22
+  fixtures including BOTIFY_JWT, all 9 issuer-prefix patterns,
+  and explicit false-positive guards for UUID/hash/Docker-ID,
+  2026-05-01) — all passed. Add as proper Vitest regression
+  coverage when test infra lands; cases to cover are
+  `/api/stacks`, `/api/stacks/{id}`, and the container-inspect
+  proxy path (`/api/endpoints/{id}/docker/containers/{id}/json`).
 - Container logs are returned raw — Docker's stream multiplexing
   prefix bytes are NOT stripped. Readable for the LLM but ugly. Could
   parse and clean if it proves to be a problem.
