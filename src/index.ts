@@ -25,11 +25,30 @@ const portainer = new PortainerClient({
   verifyTls: PORTAINER_VERIFY_TLS,
 });
 
+const INSTRUCTIONS = `MCP server for Portainer (Docker stack & container management). Read tools (list/get/inspect, container logs, system status) and write tools (start/stop/restart/kill containers, create/delete/redeploy stacks, set stack env, recreate containers, convert stack to git-managed).
+
+Idioms:
+- Most tools take an endpoint_id — the Portainer environment ID. Use portainer_list_endpoints first if you don't know it; for typical home setups it's 2 (the local Docker socket).
+- Stack env values returned by portainer_list_stacks and portainer_get_stack (and Docker inspect Config.Env via portainer_get_container) are scrubbed at the client — values that look like secrets come back as "<redacted>". Real values must be fetched from Portainer's UI directly; the MCP intentionally won't expose them.
+- Write tools have side effects of varying severity:
+  - portainer_container_restart / _start / _stop are reversible.
+  - portainer_container_kill is SIGKILL (not graceful).
+  - portainer_delete_stack removes the stack and all its containers.
+  - portainer_redeploy_stack (or _redeploy_git_stack) is the standard "apply config changes" flow after editing env vars or compose.
+  Confirm with the user before invoking any mutation tool unless intent is unambiguous.
+
+Auth: Portainer API key via PORTAINER_API_KEY env var (X-API-Key header). Optional PORTAINER_VERIFY_TLS=false for self-signed certs (typical home setup).`;
+
 function createServer(): McpServer {
-  const server = new McpServer({
-    name: "portainer-mcp",
-    version: "0.1.0",
-  });
+  const server = new McpServer(
+    {
+      name: "portainer-mcp",
+      version: "0.1.0",
+    },
+    {
+      instructions: INSTRUCTIONS,
+    },
+  );
   registerPortainerTools(server, portainer);
   return server;
 }
