@@ -518,6 +518,7 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_create_git_stack`  | `POST /api/stacks/create/standalone/repository?endpointId=N`              | Git-managed standalone Compose. Optional auth (PAT visible in tool-call logs); `confirm: true` |
 | `portainer_convert_stack_to_git` | GET stack (noRedact) → GET file (noRedact) → DELETE stack → POST create-from-repository | Atomic file→git conversion preserving env server-side; two-factor confirm; recovery payload on failure |
 | `portainer_set_stack_env`     | GET stack (noRedact) → apply set/remove → PUT (file-based) or PUT git/redeploy (git-managed) | Auto-detects file vs git; triggers redeploy (env change requires container restart); `pull_image` defaults to false |
+| `portainer_set_git_auth`      | GET stack (noRedact) → POST /api/stacks/{id}/git with auth + env+autoUpdate round-trip | Adds, updates, or (with `remove: true`) wipes git auth on a git-managed stack. No redeploy — pair with `redeploy_git_stack` to exercise the new creds |
 | `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 
@@ -539,7 +540,6 @@ relying on the shape.
 | Start stack                             | `POST /api/stacks/{id}/start` — Swarm pulls images implicitly                                                                  | Low                   |
 | Stop stack                              | `POST /api/stacks/{id}/stop` — Swarm semantics destructive                                                                     | Medium (Swarm)        |
 | Create swarm stack                      | `POST /api/stacks/create/swarm/string?endpointId=N` with `{Name, SwarmID, StackFileContent, Env}`                              | Medium                |
-| Update git config (no redeploy)         | `POST /api/stacks/{id}/git` — also wipes Env if omitted                                                                        | Medium                |
 
 ### Container operations
 
