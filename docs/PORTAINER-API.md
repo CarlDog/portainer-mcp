@@ -509,6 +509,7 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true` |
 | `portainer_create_stack`      | `POST /api/stacks/create/standalone/string?endpointId=N`                  | File-based standalone Compose. Pre-flight name-collision check; `confirm: true`   |
 | `portainer_create_git_stack`  | `POST /api/stacks/create/standalone/repository?endpointId=N`              | Git-managed standalone Compose. Optional auth (PAT visible in tool-call logs); `confirm: true` |
+| `portainer_convert_stack_to_git` | GET stack (noRedact) → GET file (noRedact) → DELETE stack → POST create-from-repository | Atomic file→git conversion preserving env server-side; two-factor confirm; recovery payload on failure |
 | `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 

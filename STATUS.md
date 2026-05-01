@@ -177,25 +177,38 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   (default `docker-compose.yml`), env, and optional username/password
   for private repos (PAT visible in tool-call logs — caveat in tool
   description). Same pre-flight name-collision check as create_stack.
-  Enables fully MCP-driven conversion of file-based stacks to
-  git-managed (delete + create_git_stack) without leaving Claude.
+  Verified end-to-end against the live NAS 2026-04-30: created
+  plex-mcp git-managed pointing at github.com/CarlDog/plex-mcp,
+  user added PLEX_TOKEN via UI, ran portainer_redeploy_git_stack
+  to confirm env round-trip preserves real secrets — token visually
+  confirmed intact in Portainer UI after redeploy. The full
+  delete + create_git_stack + redeploy_git_stack lifecycle works
+  via MCP without UI ceremony beyond the secret entry.
+- **One-shot file→git conversion: `portainer_convert_stack_to_git`.**
+  Atomic delete-then-create-from-repo that PRESERVES env values
+  server-side via the noRedact pattern — caller never has to
+  re-enter secrets via the Portainer UI after conversion. Two-factor
+  confirm (`confirm_name` matching the source stack's Name +
+  `confirm: true`). Captures source compose YAML before delete; if
+  the create step fails the thrown error includes the original
+  compose plus the env KEY names (NEVER values — secrets stay
+  protected even on the failure path) so the user can recover via
+  `portainer_create_stack` + UI re-entry of secrets. Uses the
+  repo's compose for the new stack (not the source's), so any
+  port/volume divergence between source and repo is intentional.
+  Refuses self-conversion of portainer-mcp (would die mid-call).
 
 ## Next
 
 - Add tests once a real Portainer test target is set up. Highest
   ROI: regression coverage for the env round-trip on both redeploy
-  variants — that's the path most likely to silently corrupt state.
-- Smoke-test the new tools against the live NAS once the new image
-  ships:
-  - `portainer_create_git_stack` + `portainer_redeploy_git_stack` —
-    convert plex-mcp from file-based to git-managed (delete +
-    create_git_stack pointing at github.com/CarlDog/plex-mcp), then
-    redeploy via the git tool. Confirms env round-trip preserves
-    real secrets and git config survives.
-  - `portainer_recreate_container` smoke-tested 2026-04-30 (busybox
-    in mcp-smoketest stack); the by-name failure mode is now fixed.
-  - `portainer_create_stack` smoke-tested 2026-04-30 (mcp-smoketest
-    create + delete via tools end-to-end).
+  variants AND the convert tool — those are the paths most likely
+  to silently corrupt state.
+- Smoke-test `portainer_convert_stack_to_git` against the live
+  NAS once the new image ships. Good target: any of the *-mcp
+  stacks. After convert, the new stack should be git-managed AND
+  retain its secrets without manual UI re-entry — the whole point
+  of this tool vs. the manual delete+create_git_stack flow.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
