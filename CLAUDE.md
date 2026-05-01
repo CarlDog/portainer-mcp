@@ -104,12 +104,26 @@ docker build -t portainer-mcp .
   `Env` arrays with values in plaintext. `PortainerClient.request<T>()`
   runs the `redactSecrets` walker on every JSON response: any property
   named `Env`/`env` (case-insensitive) whose value is an array gets
-  scrubbed. Env keys matching
-  `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)`
-  have their values replaced with `<redacted>`; keys are never
-  altered. Handles both wire shapes — Portainer's
-  `[{Name, Value}, …]` (or lowercase) and Docker inspect's
-  `["KEY=VALUE", …]`.
+  scrubbed. Two parallel detection paths — an entry is redacted if
+  EITHER fires:
+  - **Key-name match.** Env keys matching
+    `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn)`
+    have their values replaced with `<redacted>`; keys are never
+    altered.
+  - **Value-shape match.** Even when the key name doesn't telegraph
+    "secret" (e.g. `BOTIFY_JWT`, `SESSION_DATA`), the value is
+    redacted if it matches one of `SECRET_VALUE_PATTERNS` —
+    high-confidence issuer prefixes that don't appear in non-secret
+    values: JWT (`eyJ...`), GitHub PATs (`ghp_`, `github_pat_`),
+    Stripe (`sk_live_`, `pk_test_`, etc.), Anthropic / OpenAI
+    (`sk-`, `sk-ant-`), Slack (`xox[baprs]-`), AWS (`AKIA`, `ASIA`),
+    Google (`AIza`), and PEM `-----BEGIN ... PRIVATE KEY-----`
+    markers. We deliberately avoid generic entropy/length thresholds
+    because UUIDs, content hashes, and Docker container IDs would
+    false-positive — config the LLM legitimately needs to read.
+
+  Handles both wire shapes — Portainer's `[{Name, Value}, …]` (or
+  lowercase) and Docker inspect's `["KEY=VALUE", …]`.
 
   **Architectural invariant — don't bypass `request<T>()`.** The
   redactor lives in the JSON branch of `request<T>()`. Any new client

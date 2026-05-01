@@ -13,9 +13,47 @@ interface FetchInitWithDispatcher extends RequestInit {
   dispatcher?: Agent;
 }
 
+// Key-name patterns. If a stack env entry's NAME matches this, the
+// VALUE is redacted regardless of its content. Conservative-but-broader
+// than the original — added: jwt, bearer, credential, dsn (database
+// connection strings often inline creds).
 const SECRET_KEY_RE =
-  /(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$)/i;
+  /(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn)/i;
+
+// Value-shape patterns. If a stack env entry's VALUE matches any of
+// these, the value is redacted regardless of the key name. Catches the
+// classic "key name doesn't telegraph 'this is a secret' but the value
+// definitely is one" case (e.g. BOTIFY_JWT — name doesn't match the
+// key regex, but the value is unmistakably a JWT). Each pattern is
+// chosen for near-zero false positives — they all anchor on issuer
+// prefixes or wire shapes that don't appear in non-secret values.
+const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
+  // JWT — three dot-separated base64url segments, standard header
+  /^eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/,
+  // GitHub Personal Access Tokens (ghp_, gho_, ghs_, ghr_, ghu_)
+  /^gh[pousr]_[A-Za-z0-9]{36,}$/,
+  /^github_pat_[A-Za-z0-9_]{20,}$/,
+  // Stripe live/test secret + publishable
+  /^(sk|pk)_(live|test)_[A-Za-z0-9]{20,}$/,
+  // Anthropic / OpenAI (sk- and sk-ant-)
+  /^sk-(ant-)?[A-Za-z0-9_-]{20,}$/,
+  // Slack tokens (xoxb, xoxp, xoxa, xoxr, xoxs)
+  /^xox[baprs]-[A-Za-z0-9-]{20,}$/,
+  // AWS access key IDs
+  /^(AKIA|ASIA)[A-Z0-9]{16}$/,
+  // Google API keys
+  /^AIza[A-Za-z0-9_-]{35}$/,
+  // PEM-encoded private keys (any line containing the marker)
+  /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+];
+
 const REDACTED = "<redacted>";
+
+function looksLikeSecretValue(value: unknown): boolean {
+  if (typeof value !== "string") return false;
+  if (value.length < 20) return false;
+  return SECRET_VALUE_PATTERNS.some((re) => re.test(value));
+}
 
 function scrubEnvArray(arr: unknown[]): unknown[] {
   return arr.map((entry) => {
@@ -23,13 +61,12 @@ function scrubEnvArray(arr: unknown[]): unknown[] {
       const e = entry as Record<string, unknown>;
       const nameKey = "Name" in e ? "Name" : "name" in e ? "name" : null;
       const valueKey = "Value" in e ? "Value" : "value" in e ? "value" : null;
-      if (
-        nameKey &&
-        valueKey &&
-        typeof e[nameKey] === "string" &&
-        SECRET_KEY_RE.test(e[nameKey] as string)
-      ) {
-        return { ...e, [valueKey]: REDACTED };
+      if (nameKey && valueKey && typeof e[nameKey] === "string") {
+        const matchesName = SECRET_KEY_RE.test(e[nameKey] as string);
+        const matchesValue = looksLikeSecretValue(e[valueKey]);
+        if (matchesName || matchesValue) {
+          return { ...e, [valueKey]: REDACTED };
+        }
       }
       return entry;
     }
@@ -37,7 +74,8 @@ function scrubEnvArray(arr: unknown[]): unknown[] {
       const eq = entry.indexOf("=");
       if (eq > 0) {
         const key = entry.slice(0, eq);
-        if (SECRET_KEY_RE.test(key)) {
+        const value = entry.slice(eq + 1);
+        if (SECRET_KEY_RE.test(key) || looksLikeSecretValue(value)) {
           return `${key}=${REDACTED}`;
         }
       }
