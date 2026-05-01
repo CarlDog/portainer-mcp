@@ -466,6 +466,8 @@ via the host's hostname (e.g. `carldog-nas:9443`). Use
 | `portainer_recreate_container`| `POST /api/docker/{id}/containers/{id}/recreate` body `{PullImage}`       | **Native handler** (NOT under the proxy tree); `confirm: true` |
 | `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`    |
 | `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true` |
+| `portainer_create_stack`      | `POST /api/stacks/create/standalone/string?endpointId=N`                  | File-based standalone Compose. Pre-flight name-collision check; `confirm: true`   |
+| `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 
 All requests carry `X-API-Key: <key>` as an HTTP header
@@ -485,8 +487,7 @@ relying on the shape.
 |-----------------------------------------|--------------------------------------------------------------------------------------------------------------------------------|-----------------------|
 | Start stack                             | `POST /api/stacks/{id}/start` — Swarm pulls images implicitly                                                                  | Low                   |
 | Stop stack                              | `POST /api/stacks/{id}/stop` — Swarm semantics destructive                                                                     | Medium (Swarm)        |
-| Delete stack                            | `DELETE /api/stacks/{id}?endpointId=N` — also removes ProjectPath dir + ResourceControl                                        | High                  |
-| Create file-based stack                 | `POST /api/stacks/create/standalone/string?endpointId=N` with `{Name, StackFileContent, Env}`                                  | Medium                |
+| Create swarm stack                      | `POST /api/stacks/create/swarm/string?endpointId=N` with `{Name, SwarmID, StackFileContent, Env}`                              | Medium                |
 | Create git-based stack                  | `POST /api/stacks/create/standalone/repository` with `{Name, RepositoryURL, ...}`                                              | Medium                |
 | Update git config (no redeploy)         | `POST /api/stacks/{id}/git` — also wipes Env if omitted                                                                        | Medium                |
 

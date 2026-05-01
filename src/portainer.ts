@@ -366,6 +366,76 @@ export class PortainerClient {
       { PullImage: opts.pullImage },
     );
   }
+
+  async createStack(
+    endpointId: number,
+    spec: {
+      name: string;
+      composeContent: string;
+      env?: Array<{ name: string; value: string }>;
+    },
+  ): Promise<unknown> {
+    // Pre-flight name-collision check across all stacks on this endpoint.
+    // Catches two failure modes:
+    //   1. Portainer's silent-nuke trap on standalone/string create —
+    //      checkAndCleanStackDupFromSwarm deletes any existing Swarm stack
+    //      with the same name on the same endpoint without warning.
+    //   2. Honest user error / LLM hallucinating a stack name that
+    //      already exists. Either way, refusing here is safer than
+    //      letting Portainer silently destroy state.
+    interface RawStackSummary {
+      Name: string;
+      EndpointId: number;
+    }
+    const existing = await this.request<RawStackSummary[]>(
+      "GET",
+      "/api/stacks",
+      { filters: JSON.stringify({ EndpointId: endpointId }) },
+    );
+    const collision = existing.find((s) => s.Name === spec.name);
+    if (collision) {
+      throw new Error(
+        `Stack "${spec.name}" already exists on endpoint ${endpointId}. Refusing to create — use portainer_redeploy_stack to update an existing stack, or portainer_delete_stack first if you really want to recreate from scratch.`,
+      );
+    }
+    return this.request(
+      "POST",
+      "/api/stacks/create/standalone/string",
+      { endpointId: String(endpointId) },
+      {
+        Name: spec.name,
+        StackFileContent: spec.composeContent,
+        Env: spec.env ?? [],
+      },
+    );
+  }
+
+  async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
+    // Two-factor confirmation: the stack id has to resolve to a stack
+    // whose Name matches the caller's confirmName. Catches "wrong stack
+    // id" disasters where the LLM picked the wrong number.
+    interface RawStack {
+      Id: number;
+      Name: string;
+      EndpointId: number;
+    }
+    const stack = await this.request<RawStack>("GET", `/api/stacks/${stackId}`);
+    if (stack.Name !== confirmName) {
+      throw new Error(
+        `Name mismatch: stack ${stackId} is "${stack.Name}", caller supplied confirm_name="${confirmName}". Refusing to delete. If you really want to delete this stack, re-call with the correct name.`,
+      );
+    }
+    await this.request("DELETE", `/api/stacks/${stackId}`, {
+      endpointId: String(stack.EndpointId),
+    });
+    return {
+      ok: true,
+      action: "delete",
+      stack_id: stackId,
+      name: stack.Name,
+      endpoint_id: stack.EndpointId,
+    };
+  }
 }
 
 export function registerPortainerTools(
@@ -690,5 +760,79 @@ export function registerPortainerTools(
           pullImage: pull_image ?? true,
         }),
       ),
+  );
+
+  server.registerTool(
+    "portainer_create_stack",
+    {
+      title: "Portainer: Create Stack",
+      description:
+        "Create a new file-based standalone Compose stack on a Docker endpoint. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint (catches Portainer's silent same-name Swarm-stack deletion trap and prevents accidental overwrites — use portainer_redeploy_stack to update an existing stack, or portainer_delete_stack first if you really mean to recreate). Synchronous deploy; may block for minutes on large stacks. Returns the new stack JSON including its assigned ID.",
+      inputSchema: {
+        name: z
+          .string()
+          .min(1)
+          .describe(
+            "Stack name. Lowercase recommended; must be unique on the endpoint.",
+          ),
+        endpoint_id: z
+          .number()
+          .int()
+          .describe("Endpoint ID where the stack should be deployed"),
+        compose: z
+          .string()
+          .min(1)
+          .describe(
+            "Full docker-compose.yml content as a string. Use ${VAR} references for any secrets and pass the values via env, not inlined in the YAML.",
+          ),
+        env: z
+          .array(
+            z.object({
+              name: z.string(),
+              value: z.string(),
+            }),
+          )
+          .optional()
+          .describe(
+            "Stack-level environment variables. Each becomes available for ${VAR} substitution in the compose file.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe("Must be exactly true to acknowledge creating a new stack"),
+      },
+    },
+    async ({ name, endpoint_id, compose, env }) =>
+      asText(
+        await p.createStack(endpoint_id, {
+          name,
+          composeContent: compose,
+          env,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_delete_stack",
+    {
+      title: "Portainer: Delete Stack",
+      description:
+        "Delete a stack — removes the containers, the on-disk ProjectPath, and the Portainer ResourceControl record. HIGH BLAST RADIUS: requires both confirm:true AND confirm_name matching the stack's actual name (two-factor confirmation prevents 'wrong stack id' disasters where the LLM picked the wrong number). Endpoint ID is read from the stack record automatically.",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID to delete"),
+        confirm_name: z
+          .string()
+          .min(1)
+          .describe(
+            "Must exactly match the stack's Name. Two-factor confirm — proves the caller knows which stack they're killing.",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive action",
+          ),
+      },
+    },
+    async ({ stack_id, confirm_name }) =>
+      asText(await p.deleteStack(stack_id, confirm_name)),
   );
 }
