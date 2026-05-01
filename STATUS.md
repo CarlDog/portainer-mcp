@@ -145,14 +145,26 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   earlier PORTAINER-API.md doc had this wrong (now corrected).
 - **GitHub Actions bumped across all 5 MCP repos** to the current
   latest majors. Beat the June 2 2026 Node 20 force-upgrade.
+- **Stack create + delete landed:** `portainer_create_stack`
+  (`POST /api/stacks/create/standalone/string?endpointId=N`) and
+  `portainer_delete_stack` (`DELETE /api/stacks/{id}?endpointId=N`).
+  Closes the gap noted in another session — initial stack creation
+  no longer requires the Portainer UI; portainer-mcp is now fully
+  self-bootstrapping for file-based Compose stacks. `create_stack`
+  pre-flights with a name-collision check across all stacks on the
+  target endpoint (catches Portainer's silent same-name Swarm-stack
+  deletion trap; refuses overwrites). `delete_stack` uses two-factor
+  confirmation: caller supplies both `confirm: true` AND
+  `confirm_name` matching the stack's actual Name — catches
+  "wrong stack id" disasters where the LLM picked the wrong number.
+  Both tools require `confirm: true`. Endpoint id for delete is
+  derived from the stack record (no need to expose it as input).
 
 ## Next
 
 - Add tests once a real Portainer test target is set up. Highest
   ROI: regression coverage for the env round-trip on both redeploy
   variants — that's the path most likely to silently corrupt state.
-- Consider a `portainer_deploy_stack` tool that wraps the
-  string-based deploy we used by hand. Self-bootstrapping potential.
 - Smoke-test the new tools against the live NAS once the new image
   ships:
   - `portainer_recreate_container` against a low-stakes container
@@ -162,6 +174,12 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     are currently git-managed, so this needs a deliberate test
     setup (create a git stack, redeploy it, confirm git config
     survives).
+  - `portainer_create_stack` — try a tiny throwaway stack
+    (e.g. busybox sleep), confirm it lands and is visible in
+    Portainer UI, then `portainer_delete_stack` it.
+- Consider extending `portainer_create_stack` to also support
+  Swarm and git-method (repository) variants. Lower priority —
+  not needed for current workflows.
 
 ## Open Decisions
 
