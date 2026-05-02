@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-05-01
+**Last updated:** 2026-05-02
 
 ## Phase
 
@@ -211,6 +211,22 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   exists for programmatically setting secrets. Closes the gap
   flagged from another session: env additions previously needed
   the Portainer UI.
+- **Volume read tools: `portainer_list_volumes` +
+  `portainer_inspect_volume` (2026-05-02).** Read-only audit
+  surface for the orphan-volume-accumulation problem. `list_volumes`
+  wraps `GET /api/endpoints/{id}/docker/volumes` and exposes
+  Docker's filter API (`dangling: true` for unused-only,
+  `dangling: false` for in-use-only, `name` for substring match).
+  `inspect_volume` wraps `GET /volumes/{name}` for detail
+  (Mountpoint host path, Labels including the Compose project
+  label that maps back to a stack name, CreatedAt). Designed for
+  "audit unused volumes via Claude" workflows — surfaces what's
+  in the UI's Volumes page without hunting. Pure reads, zero risk.
+  Prune (`POST /volumes/prune`) deliberately not built —
+  auto-removal of "unused" stateful storage is dangerous (Docker's
+  definition of "unused" includes brief stack-redeploy windows
+  where containers detach temporarily). Manual cleanup via UI or
+  CLI remains the safer pattern.
 
 ## Next
 

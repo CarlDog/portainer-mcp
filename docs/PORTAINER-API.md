@@ -520,6 +520,8 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_set_stack_env`     | GET stack (noRedact) → apply set/remove → PUT (file-based) or PUT git/redeploy (git-managed) | Auto-detects file vs git; triggers redeploy (env change requires container restart); `pull_image` defaults to false |
 | `portainer_set_git_auth`      | GET stack (noRedact) → POST /api/stacks/{id}/git with auth + env+autoUpdate round-trip | Adds, updates, or (with `remove: true`) wipes git auth on a git-managed stack. No redeploy — pair with `redeploy_git_stack` to exercise the new creds |
 | `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
+| `portainer_list_volumes`      | `GET /api/endpoints/{id}/docker/volumes` (optional `?filters={"dangling":["true"]}`) | Read-only audit. Surface orphan volumes from deleted stacks |
+| `portainer_inspect_volume`    | `GET /api/endpoints/{id}/docker/volumes/{name}`                           | Mountpoint, Labels (Compose project label maps to stack name), CreatedAt |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
 
 All requests carry `X-API-Key: <key>` as an HTTP header
@@ -567,12 +569,24 @@ to forward unchanged.
 
 ### Network / volume operations
 
-Lower priority — flag if a use case arrives.
+Volume read tools (`list_volumes`, `inspect_volume`) shipped
+2026-05-02 to support orphan-volume audits. Remaining items lower
+priority — flag if a use case arrives.
 
-- `GET /api/endpoints/{id}/docker/networks` and `/volumes` — list with
-  Portainer RC decoration.
-- `POST /networks/create`, `POST /volumes/create` — same.
-- `DELETE` for both — RC cleanup on success.
+- `POST /api/endpoints/{id}/docker/volumes/prune` — bulk-remove all
+  unused volumes. Destructive; left unbuilt deliberately. Auto-removal
+  of "unused" stateful storage is risky (Docker considers a volume
+  unused when no container currently references it, which is true
+  during stack-redeploy windows too). Manual cleanup via UI or
+  `docker volume prune` from CLI is the safer pattern. Build only if
+  you find yourself doing repetitive volume-cleanup sessions.
+- `DELETE /api/endpoints/{id}/docker/volumes/{name}` — single volume
+  removal. Same caveats as prune but bounded to one volume. Useful if
+  the orphan audit identifies a specific volume to nuke.
+- `GET /api/endpoints/{id}/docker/networks` — list with Portainer RC
+  decoration. Same shape as volumes; build if needed.
+- `POST /networks/create`, `POST /volumes/create` — RC-attaching
+  creation. Build if a workflow needs them.
 - `POST /networks/{id}/connect` and `/disconnect` — attach/detach
   containers.
 

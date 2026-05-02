@@ -219,6 +219,41 @@ export class PortainerClient {
     return this.request("GET", "/api/system/status");
   }
 
+  async listVolumes(
+    endpointId: number,
+    filters?: { dangling?: boolean; name?: string },
+  ): Promise<unknown> {
+    // Docker's /volumes endpoint accepts a `filters` query param that's
+    // a JSON-encoded map of field -> string[] values. Build it from
+    // the caller's high-level filter inputs.
+    const dockerFilters: Record<string, string[]> = {};
+    if (filters?.dangling !== undefined) {
+      dockerFilters.dangling = [String(filters.dangling)];
+    }
+    if (filters?.name) {
+      dockerFilters.name = [filters.name];
+    }
+    const query: Record<string, string> = {};
+    if (Object.keys(dockerFilters).length > 0) {
+      query.filters = JSON.stringify(dockerFilters);
+    }
+    return this.request(
+      "GET",
+      `/api/endpoints/${endpointId}/docker/volumes`,
+      query,
+    );
+  }
+
+  async inspectVolume(
+    endpointId: number,
+    volumeName: string,
+  ): Promise<unknown> {
+    return this.request(
+      "GET",
+      `/api/endpoints/${endpointId}/docker/volumes/${encodeURIComponent(volumeName)}`,
+    );
+  }
+
   async containerStart(
     endpointId: number,
     containerId: string,
@@ -944,6 +979,50 @@ export function registerPortainerTools(
     },
     async ({ endpoint_id, container_id, tail }) =>
       asText(await p.containerLogs(endpoint_id, container_id, tail ?? 100)),
+  );
+
+  server.registerTool(
+    "portainer_list_volumes",
+    {
+      title: "Portainer: List Volumes",
+      description:
+        "List Docker volumes on an endpoint. Useful for spotting orphan/unused volumes accumulated from deleted stacks. Optional filters: `dangling: true` returns only volumes with no container reference (true orphans), `dangling: false` returns only in-use volumes, omit for all. `name` is a substring filter on volume name.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        dangling: z
+          .boolean()
+          .optional()
+          .describe(
+            "Filter by usage. true = only unused (no container references), false = only in-use, omit = all volumes.",
+          ),
+        name: z
+          .string()
+          .optional()
+          .describe("Substring filter on volume name (Docker's name filter)."),
+      },
+    },
+    async ({ endpoint_id, dangling, name }) =>
+      asText(await p.listVolumes(endpoint_id, { dangling, name })),
+  );
+
+  server.registerTool(
+    "portainer_inspect_volume",
+    {
+      title: "Portainer: Inspect Volume",
+      description:
+        "Get full details for a single Docker volume — Mountpoint (host path), Driver, CreatedAt, Labels (including the Compose project label that maps to a stack), Scope, and Options. Use this to decide whether an unused volume is safe to remove (check Labels for the originating stack name; check Mountpoint size on disk if needed).",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        volume_name: z
+          .string()
+          .min(1)
+          .describe(
+            "Volume name (from portainer_list_volumes). Names with special characters are URL-encoded automatically.",
+          ),
+      },
+    },
+    async ({ endpoint_id, volume_name }) =>
+      asText(await p.inspectVolume(endpoint_id, volume_name)),
   );
 
   server.registerTool(
