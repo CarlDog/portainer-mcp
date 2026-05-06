@@ -54,7 +54,11 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 - Serena project activated with five memories
   (`project_overview`, `structure`, `suggested_commands`, `conventions`,
   `task_completion`). Memories are workstation-neutral.
-- OpenChronicle registered local-scope for this directory.
+- OpenChronicle registered user-scope HTTP at
+  `http://carldog-nas:18000/mcp/` (NAS Portainer stack 151). Project
+  id `5e12a080-0f4d-405c-a2c6-86026f6aae49`. Initial entry was a stale
+  local-scope `oc mcp serve` from before the v3 NAS deployment; that
+  was removed 2026-05-06 — local-only OC is no longer used.
 - **Secrets-leak fix landed in `PortainerClient`.** Generic
   `redactSecrets` walker runs once on every JSON response inside
   `request<T>()`. Recursively descends the response tree; any
