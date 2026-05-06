@@ -204,16 +204,23 @@ about mocked-vs-real divergence).
 
 ## MCP tooling (local workstation)
 
-This repo is registered with two MCP servers for Claude Code sessions
-opened in this directory:
+This repo's Claude Code sessions use two MCP servers:
 
 - **Serena** — user-scoped (available in every project on this machine).
   Project memories are written under the `portainer-mcp` Serena project.
-- **OpenChronicle** — registered at *local scope* for this directory
-  via `claude mcp add openchronicle -- oc mcp serve`. Effective for
-  future Claude Code sessions opened with cwd = repo root. Config lives
-  in `~/.claude.json` under the project entry — not committed.
+- **OpenChronicle** — user-scoped HTTP transport pointing at the NAS
+  deployment at `http://your-nas:18000/mcp/` (Portainer stack 151,
+  image `ghcr.io/carldog/openchronicle-mcp`). One container, one DB,
+  shared across every project. The trailing slash on `/mcp/` matters —
+  the server 307-redirects without it. Register with:
+  `claude mcp add --transport http --scope user openchronicle http://your-nas:18000/mcp/`.
 
-If you re-clone the repo on another machine, re-register OpenChronicle
-with the same command. Serena will work automatically if it's already
-user-scoped on that machine.
+**Do not run a local `oc serve` or save via the local `oc` CLI.** The
+local binary still exists on the workstation but its SQLite DB is not
+authoritative — anything written there is invisible to MCP tools and
+to other workstations. NAS-only is the rule.
+
+The project_id for this repo on the NAS OC is
+`5e12a080-0f4d-405c-a2c6-86026f6aae49`. `memory_save` calls must pass
+that as `project_id` (FK; freeform strings fail). `project_list` lookup
+by name is the resilient way to resolve it if the ID drifts.
