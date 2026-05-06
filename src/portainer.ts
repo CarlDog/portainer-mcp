@@ -265,9 +265,25 @@ export class PortainerClient {
     endpointId: number,
     containerId: string,
   ): Promise<unknown> {
+    // Send a tiny "{}" body (2 bytes) as a workaround for Docker's
+    // /start strictness. Docker's documented check is
+    // `r.ContentLength > 7 || r.ContentLength == -1` — but in
+    // practice (Synology Docker, observed 2026-05-06) requests with
+    // Content-Length: 0 still trigger the "non-empty request body
+    // was deprecated since API v1.22 and removed in v1.24" error.
+    // A 2-byte empty-JSON body satisfies the size threshold (2 ≤ 7)
+    // and the /start handler ignores body content entirely (it only
+    // reads checkpoint/checkpoint-dir from the query string).
+    // Earlier attempt (commit 3592653) tried to suppress
+    // Content-Length: 0 from the fetch layer; undici emits it
+    // unconditionally for POST regardless of init.body presence,
+    // so that approach was a no-op. This shipping the body is the
+    // empirical fix that actually works.
     return this.request(
       "POST",
       `/api/endpoints/${endpointId}/docker/containers/${containerId}/start`,
+      undefined,
+      {},
     );
   }
 
