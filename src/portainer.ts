@@ -141,8 +141,15 @@ export class PortainerClient {
     const init: FetchInitWithDispatcher = {
       method,
       headers,
-      body: bodyStr,
     };
+    // Only attach `body` when we actually have one. Setting `init.body =
+    // undefined` causes undici to still emit `Content-Length: 0`, which
+    // Docker's POST /containers/{id}/start rejects as "non-empty request
+    // body" (deprecated v1.22, removed v1.24). Other endpoints tolerate
+    // it, but start is uniquely strict — see the Docker engine API ref.
+    if (bodyStr !== undefined) {
+      init.body = bodyStr;
+    }
     if (this.insecureDispatcher) {
       init.dispatcher = this.insecureDispatcher;
     }
