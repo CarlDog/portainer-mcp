@@ -326,10 +326,20 @@ export class PortainerClient {
     );
   }
 
-  async redeployStack(
+  // Shared by file-based update endpoints. Reads the stack with
+  // noRedact so the caller gets the raw env for round-trip, and
+  // refuses git-managed or non-Compose/Swarm stacks (the file-based
+  // PUT would silently detach git stacks via stack.GitConfig = nil).
+  private async assertFileBasedStack(
     stackId: number,
-    opts: { pullImage: boolean; prune: boolean },
-  ): Promise<unknown> {
+    op: string,
+  ): Promise<{
+    Id: number;
+    Type: number;
+    EndpointId: number;
+    Name: string;
+    Env?: unknown[];
+  }> {
     interface RawStack {
       Id: number;
       Type: number;
@@ -352,9 +362,17 @@ export class PortainerClient {
     }
     if (stack.Type !== 1 && stack.Type !== 2) {
       throw new Error(
-        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; redeploy supports only Compose (2) and Swarm (1). Kubernetes stacks (3) require a different endpoint.`,
+        `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; ${op} supports only Compose (2) and Swarm (1). Kubernetes stacks (3) require a different endpoint.`,
       );
     }
+    return stack;
+  }
+
+  async redeployStack(
+    stackId: number,
+    opts: { pullImage: boolean; prune: boolean },
+  ): Promise<unknown> {
+    const stack = await this.assertFileBasedStack(stackId, "redeploy");
     const file = await this.request<{ StackFileContent: string }>(
       "GET",
       `/api/stacks/${stackId}/file`,
@@ -368,6 +386,25 @@ export class PortainerClient {
       { endpointId: String(stack.EndpointId) },
       {
         stackFileContent: file.StackFileContent,
+        env: stack.Env ?? [],
+        repullImageAndRedeploy: opts.pullImage,
+        prune: opts.prune,
+      },
+    );
+  }
+
+  async updateStackFile(
+    stackId: number,
+    composeContent: string,
+    opts: { pullImage: boolean; prune: boolean },
+  ): Promise<unknown> {
+    const stack = await this.assertFileBasedStack(stackId, "update");
+    return this.request(
+      "PUT",
+      `/api/stacks/${stackId}`,
+      { endpointId: String(stack.EndpointId) },
+      {
+        stackFileContent: composeContent,
         env: stack.Env ?? [],
         repullImageAndRedeploy: opts.pullImage,
         prune: opts.prune,
@@ -1202,6 +1239,46 @@ export function registerPortainerTools(
     async ({ stack_id, pull_image, prune }) =>
       asText(
         await p.redeployStack(stack_id, {
+          pullImage: pull_image ?? true,
+          prune: prune ?? false,
+        }),
+      ),
+  );
+
+  server.registerTool(
+    "portainer_update_stack_file",
+    {
+      title: "Portainer: Update Stack File",
+      description:
+        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer.",
+      inputSchema: {
+        stack_id: z.number().int().describe("Stack ID to update"),
+        compose_content: z
+          .string()
+          .min(1)
+          .describe(
+            "New compose YAML to install on the stack. Replaces the stored file in full — no diff/merge. Caller is responsible for round-tripping anything they want to keep. Portainer validates the YAML at deploy time; bad YAML surfaces as a deploy error.",
+          ),
+        pull_image: z
+          .boolean()
+          .optional()
+          .describe("Pull the latest image before recreating (default true)"),
+        prune: z
+          .boolean()
+          .optional()
+          .describe(
+            "Remove containers for services no longer in the compose (default false)",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge the destructive action",
+          ),
+      },
+    },
+    async ({ stack_id, compose_content, pull_image, prune }) =>
+      asText(
+        await p.updateStackFile(stack_id, compose_content, {
           pullImage: pull_image ?? true,
           prune: prune ?? false,
         }),

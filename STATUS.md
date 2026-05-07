@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-05-02
+**Last updated:** 2026-05-06
 
 ## Phase
 
@@ -215,6 +215,20 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   exists for programmatically setting secrets. Closes the gap
   flagged from another session: env additions previously needed
   the Portainer UI.
+- **Compose YAML edit tool: `portainer_update_stack_file`
+  (2026-05-06).** Closes the gap surfaced from a chat session that
+  needed to add `extra_hosts` to several inline stacks (sonarr,
+  radarr, lidarr) — `portainer_redeploy_stack` only round-trips the
+  existing file unchanged, so editing the YAML required the Portainer
+  UI. New tool replaces the stored compose with caller-provided YAML
+  and redeploys. Round-trips stack-level Env so secrets aren't wiped
+  (same noRedact pattern as redeploy_stack). Refuses git-managed
+  stacks (edit the repo and use redeploy_git_stack) and
+  non-Compose/Swarm types. `confirm: true` required. Refactored the
+  type-check + git refusal out of `redeployStack` into a private
+  `assertFileBasedStack` helper that both methods now share — light
+  tidy, behavior unchanged. No tests yet (project-wide gap, see
+  Next).
 - **Volume read tools: `portainer_list_volumes` +
   `portainer_inspect_volume` (2026-05-02).** Read-only audit
   surface for the orphan-volume-accumulation problem. `list_volumes`
