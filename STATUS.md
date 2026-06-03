@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-05-06
+**Last updated:** 2026-06-03
 
 ## Phase
 
@@ -257,6 +257,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   stacks. After convert, the new stack should be git-managed AND
   retain its secrets without manual UI re-entry — the whole point
   of this tool vs. the manual delete+create_git_stack flow.
+- **Clean up `portainer_container_logs` output + add filtering.**
+  Now a proven pain point (2026-06-03, see Known Gaps): demux the
+  Docker 8-byte frame headers → newline-delimited text, and expose
+  `since`/`until`/`timestamps` + an optional server-side substring
+  filter so callers can bound the payload under token limits.
+  Highest-value read-tool improvement — surfaced while reading
+  wobblebot's daemon logs from another session.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
@@ -375,9 +382,27 @@ None active. Decisions made during scaffolding:
   coverage when test infra lands; cases to cover are
   `/api/stacks`, `/api/stacks/{id}`, and the container-inspect
   proxy path (`/api/endpoints/{id}/docker/containers/{id}/json`).
-- Container logs are returned raw — Docker's stream multiplexing
-  prefix bytes are NOT stripped. Readable for the LLM but ugly. Could
-  parse and clean if it proves to be a problem.
+- **Container logs are returned raw — and this is now a proven pain
+  point (2026-06-03).** `containerLogs` hands back Docker's raw 8-byte
+  stream-multiplexing frame headers (a `0x01`/`0x02` stream byte + 3 zero bytes + a 4-byte big-endian length, once per write) AND, because the
+  result is a single JSON-escaped string, newlines arrive as literal
+  `\n` — so a `tail` of any size comes back as ONE ~65–110 KB line.
+  Two consequences hit while reading wobblebot's daemon logs from
+  another session: (1) the blob blew past the caller's token limit on
+  `tail` ≥ ~250 lines and had to be spilled to a temp file and
+  re-parsed; (2) line-based chunking is impossible because there are
+  no real newlines. Improvements worth developing:
+  - **Demultiplex + clean the stream.** Strip the 8-byte frame
+    headers (`header[0]` = stream type, `header[4:8]` = big-endian
+    payload length) and return clean newline-delimited UTF-8. A TTY
+    container's stream isn't framed — detect (inspect `Config.Tty`)
+    and pass through.
+  - **Add server-side filtering to bound the payload.** Docker's logs
+    endpoint natively supports `since` / `until` (RFC3339 or relative)
+    and `timestamps`; expose those, plus an optional substring/regex
+    `grep` filter applied server-side. Lets a caller pull "just the
+    last 10 min" or "only lines matching `grid fill`" instead of a
+    giant tail — the real fix for the token-limit hit.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
 - No tests yet.
