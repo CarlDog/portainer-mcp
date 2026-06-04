@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-06-03
+**Last updated:** 2026-06-04
 
 ## Phase
 
@@ -264,6 +264,18 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   filter so callers can bound the payload under token limits.
   Highest-value read-tool improvement — surfaced while reading
   wobblebot's daemon logs from another session.
+- **Bound `portainer_list_containers` output + add filtering.**
+  Surfaced 2026-06-04 (see Known Gaps): the tool returns Docker's RAW full
+  container objects for EVERY container, so on the NAS (47 containers) the
+  result is ~169 KB / 4,592 lines — past the caller's token limit (had to
+  spill to a temp file + filter client-side just to find the 8 wobblebot
+  daemons during a soak check-in). Two small fixes: (1) expose Docker's
+  native `filters` (name / status / label) the same way `list_volumes`
+  already does — `?filters={"name":["wobblebot"]}` filters server-side;
+  (2) project to a compact summary by default (`Id` / `Names` / `Image` /
+  `State` / `Status` / `Created`) with an opt-in `full` flag for the raw
+  objects (the per-container detail already lives in
+  `portainer_get_container`). Sibling to the container-logs fix above.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
@@ -403,6 +415,24 @@ None active. Decisions made during scaffolding:
     `grep` filter applied server-side. Lets a caller pull "just the
     last 10 min" or "only lines matching `grid fill`" instead of a
     giant tail — the real fix for the token-limit hit.
+- **`portainer_list_containers` dumps raw full objects for ALL
+  containers — token-limit pain on a busy host (2026-06-04).**
+  `listContainers` (`src/portainer.ts`) passes Docker's
+  `/api/endpoints/{id}/docker/containers/json` response straight through
+  `asText()` with no projection and no filter — each element is the full
+  container object (NetworkSettings, Mounts, HostConfig, Labels, Ports,
+  Command, …). On the NAS (47 containers) the result is ~169 KB /
+  4,592 lines; it blew the caller's token limit during a wobblebot soak
+  check-in and had to be spilled to a temp file + filtered client-side to
+  find the 8 `wobblebot-*` daemons. The `all` flag is the only knob today.
+  Two improvements (mirrored in Next):
+  - **Expose Docker's native `filters`** (name / status / label), exactly
+    as `portainer_list_volumes` already does (dangling / name) —
+    `?filters={"name":["wobblebot"]}` filters server-side; the real fix.
+  - **Compact projection by default** — `Id` / `Names` / `Image` /
+    `State` / `Status` / `Created` per container, opt-in `full` for the
+    raw objects (full detail already lives in `portainer_get_container`).
+    Cuts the payload ~50× even without a filter.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
 - No tests yet.
