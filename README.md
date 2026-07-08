@@ -1,5 +1,10 @@
 # portainer-mcp
 
+<!-- fleet-confidence -->
+![code confidence](https://img.shields.io/badge/code_confidence-fair-orange) <sub>· `claude-opus-4-8[1m]` · 2026-07-07 · [details](https://github.com/CarlDog/portainer-mcp/issues/1)</sub>
+<!-- /fleet-confidence -->
+
+
 An [MCP](https://modelcontextprotocol.io) server for
 [Portainer](https://www.portainer.io/) — exposes stacks, containers,
 endpoints, and container logs to MCP clients (Claude Desktop, etc.).
