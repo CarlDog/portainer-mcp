@@ -202,9 +202,12 @@ path is solid.
 
 ## Testing
 
-No tests yet. When added, integration tests against a real Portainer
-instance behind env-gated tests (don't mock — see working-style note
-about mocked-vs-real divergence).
+- `npm test` — `node --test` (via tsx) over `test/*.test.ts`.
+  Currently `test/redact.test.ts`: table-driven unit tests for the
+  `redactSecrets` scrubber (pure function, no mocking involved).
+- For anything that talks to Portainer, prefer integration tests
+  against a real instance behind env-gated tests (don't mock — see
+  working-style note about mocked-vs-real divergence).
 
 ## MCP tooling (local workstation)
 

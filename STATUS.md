@@ -385,15 +385,13 @@ None active. Decisions made during scaffolding:
   `./plugins` failed; 2 orphan containers remained). User cleanup
   via Portainer UI's container Remove. Future enhancement: emit
   the orphan cleanup as part of the convert error path.
-- No regression test for the redactor yet committed. Two smoke
-  tests have been hand-run: the original key-only check (6
-  fixtures, 2026-04-29) and the value-shape enhancement (22
-  fixtures including BOTIFY_JWT, all 9 issuer-prefix patterns,
-  and explicit false-positive guards for UUID/hash/Docker-ID,
-  2026-05-01) — all passed. Add as proper Vitest regression
-  coverage when test infra lands; cases to cover are
-  `/api/stacks`, `/api/stacks/{id}`, and the container-inspect
-  proxy path (`/api/endpoints/{id}/docker/containers/{id}/json`).
+- ~~No regression test for the redactor yet committed.~~ Resolved
+  2026-07-12: `test/redact.test.ts` (44 table-driven cases, `node
+  --test` via `npm test`) covers key-name matching (incl. the new
+  url/uri/conn and pw/pwd tokens), every value-shape pattern (incl.
+  inline-credential URLs), both wire shapes (`[{Name,Value}]` and
+  `"KEY=VALUE"`), `Env`/`env` casing, nested `Config.Env`, and
+  false-positive guards for UUID/hash/Docker-ID/plain URLs.
 - **Container logs are returned raw — and this is now a proven pain
   point (2026-06-03).** `containerLogs` hands back Docker's raw 8-byte
   stream-multiplexing frame headers (a `0x01`/`0x02` stream byte + 3 zero bytes + a 4-byte big-endian length, once per write) AND, because the
