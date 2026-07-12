@@ -107,9 +107,11 @@ docker build -t portainer-mcp .
   scrubbed. Two parallel detection paths — an entry is redacted if
   EITHER fires:
   - **Key-name match.** Env keys matching
-    `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn)`
+    `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn|url|uri|conn|pwd?$)`
     have their values replaced with `<redacted>`; keys are never
-    altered.
+    altered. The `url|uri|conn` tokens cover connection strings
+    (`DATABASE_URL`, `MONGO_URI`, `PG_CONN`) that commonly inline
+    credentials.
   - **Value-shape match.** Even when the key name doesn't telegraph
     "secret" (e.g. `BOTIFY_JWT`, `SESSION_DATA`), the value is
     redacted if it matches one of `SECRET_VALUE_PATTERNS` —
@@ -117,8 +119,10 @@ docker build -t portainer-mcp .
     values: JWT (`eyJ...`), GitHub PATs (`ghp_`, `github_pat_`),
     Stripe (`sk_live_`, `pk_test_`, etc.), Anthropic / OpenAI
     (`sk-`, `sk-ant-`), Slack (`xox[baprs]-`), AWS (`AKIA`, `ASIA`),
-    Google (`AIza`), and PEM `-----BEGIN ... PRIVATE KEY-----`
-    markers. We deliberately avoid generic entropy/length thresholds
+    Google (`AIza`), PEM `-----BEGIN ... PRIVATE KEY-----`
+    markers, and URLs with inline credentials
+    (`scheme://user:pass@host`). We deliberately avoid generic
+    entropy/length thresholds
     because UUIDs, content hashes, and Docker container IDs would
     false-positive — config the LLM legitimately needs to read.
 
