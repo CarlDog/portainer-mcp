@@ -183,22 +183,19 @@ Implementation uses `undici.Agent({ connect: { rejectUnauthorized: false } })`
 as the per-request `dispatcher` — surgical, doesn't affect other fetches.
 Default is to verify (secure default).
 
-## Initial scope (read-only)
+## Tool surface
 
-7 tools, all read-only:
+23 tools registered in `src/portainer.ts` — 9 read tools (endpoints,
+stacks, containers, logs, volumes, system status) and 14 write tools
+(container start/stop/restart/kill/recreate; stack create/update/env/
+redeploy/git-convert/delete; git auth). The v1 "read-only initial
+scope" is history — see STATUS.md for the authoritative per-tool
+chronology and the README for the current tool table.
 
-- `portainer_list_endpoints` — Docker hosts/Swarms registered with Portainer
-- `portainer_list_stacks` — Stacks (optionally per-endpoint)
-- `portainer_get_stack` — Stack details by ID
-- `portainer_list_containers` — Containers in an endpoint (optional all=true)
-- `portainer_get_container` — Container details by ID/name
-- `portainer_container_logs` — Tail of container logs (1-5000 lines)
-- `portainer_system_status` — Portainer version + system info
-
-Write operations (deploy/update/remove stacks, restart/stop containers)
-are deliberately out of scope for v1. They are higher blast-radius and
-warrant explicit consent flows. Add after smoke tests prove the read
-path is solid.
+Write tools have real blast radius (`portainer_delete_stack` removes a
+stack and all its containers; `portainer_container_kill` is SIGKILL).
+Tool descriptions should make severity explicit so MCP clients can
+prompt for confirmation appropriately.
 
 ## Testing
 
