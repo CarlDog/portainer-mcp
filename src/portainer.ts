@@ -15,10 +15,11 @@ interface FetchInitWithDispatcher extends RequestInit {
 
 // Key-name patterns. If a stack env entry's NAME matches this, the
 // VALUE is redacted regardless of its content. Conservative-but-broader
-// than the original — added: jwt, bearer, credential, dsn (database
-// connection strings often inline creds).
+// than the original — added: jwt, bearer, credential, dsn, url/uri/conn
+// (connection strings like DATABASE_URL / MONGO_URI / PG_CONN often
+// inline creds), pw/pwd (ADMIN_PW-style abbreviations).
 const SECRET_KEY_RE =
-  /(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn)/i;
+  /(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn|url|uri|conn|pwd?$)/i;
 
 // Value-shape patterns. If a stack env entry's VALUE matches any of
 // these, the value is redacted regardless of the key name. Catches the
@@ -45,6 +46,9 @@ const SECRET_VALUE_PATTERNS: readonly RegExp[] = [
   /^AIza[A-Za-z0-9_-]{35}$/,
   // PEM-encoded private keys (any line containing the marker)
   /-----BEGIN [A-Z ]*PRIVATE KEY-----/,
+  // URL with inline credentials: scheme://user:pass@host — the
+  // user:pass@ segment before the host is unmistakably a credential
+  /:\/\/[^/\s@:]+:[^/\s@]+@/,
 ];
 
 const REDACTED = "<redacted>";
