@@ -6,6 +6,11 @@ on:
   pull_request:
     branches: [main]
 
+env:
+  # node 22 ships npm 10.9.8. A newer local npm is lenient about a lockfile
+  # this npm rejects, so pin both sides (here + package.json "packageManager")
+  # to keep local == CI. See claude-fleet-kit fleet/lessons/npm-version-skew.
+  PINNED_NPM: "10.9.8"
 jobs:
   test:
     name: ${{ matrix.os }}
@@ -23,6 +28,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+
+      - name: Pin npm (match local — see lessons/npm-version-skew)
+        run: npm install --global "npm@${{ env.PINNED_NPM }}"
 
       - name: Install dependencies
         run: npm ci
@@ -45,6 +53,9 @@ jobs:
         with:
           node-version: "22"
           cache: "npm"
+
+      - name: Pin npm (match local — see lessons/npm-version-skew)
+        run: npm install --global "npm@${{ env.PINNED_NPM }}"
 
       - name: Install dependencies
         run: npm ci
