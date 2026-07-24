@@ -1,0 +1,75 @@
+# Canonical Dependabot config for the fleet.
+#
+# Copy to .github/dependabot.yml and DELETE the ecosystem blocks the repo
+# doesn't have. Keeping a block for a manifest that isn't there is harmless
+# but noisy in Dependabot's logs.
+#
+# The point of the `groups:` blocks is noise, not correctness. Ungrouped,
+# a week of transitive npm churn arrives as ten separate PRs. Grouped, it
+# arrives as at most three, split along the only line that matters when
+# deciding whether to look: can this change behaviour?
+#
+#   <eco>-dev     dev tooling, minor+patch  -> auto-merged, you never see it
+#   <eco>-runtime shipped code, minor+patch -> auto-merged only if lockfile-only
+#   <eco>-major   major bumps               -> always yours to decide
+#
+# The group NAMES are load-bearing: fleet/scripts/auto-merge-dependabot.py
+# reads them out of the branch ref to decide what it may merge. Renaming a
+# group here without updating ALLOWED_GROUPS there silently stops the
+# auto-merge and everything queues up instead.
+
+version: 2
+updates:
+  # ── npm (package.json present) ────────────────────────────────────
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 5
+    labels:
+      - dependencies
+      - npm
+    groups:
+      npm-dev:
+        dependency-type: development
+        update-types: [minor, patch]
+      npm-runtime:
+        dependency-type: production
+        update-types: [minor, patch]
+      npm-major:
+        update-types: [major]
+
+  # ── GitHub Actions (.github/workflows present) ────────────────────
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - ci
+    groups:
+      actions-all:
+        update-types: [minor, patch, major]
+
+  # ── Docker (Dockerfile present) ───────────────────────────────────
+  # Deliberately ungrouped and never auto-merged: a base-image bump can
+  # change the runtime out from under the app without any manifest diff
+  # to review.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+      time: "06:00"
+      timezone: Etc/UTC
+    open-pull-requests-limit: 3
+    labels:
+      - dependencies
+      - docker
