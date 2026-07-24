@@ -13,6 +13,7 @@ on:
       - "docs/**"
       - ".vscode/**"
       - ".env.example"
+      - ".gitattributes"
   pull_request:
     branches: [main]
 
