@@ -281,7 +281,12 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   only working-tree materialization changes. Also added `.claude/` to
   `.prettierignore` + eslint ignores so root-level prettier/eslint
   runs stop walking into Claude Code worktrees under
-  `.claude/worktrees/`.
+  `.claude/worktrees/`. Follow-up: lint/format config
+  (`.prettierignore`, `.prettierrc.json`, `eslint.config.js`) and
+  developer-side git tooling (`.githooks/**`, `.gitleaks.toml`) added
+  to `docker-publish.yml`'s `paths-ignore` — none can affect the
+  image, and the 7c567b6 push showed a lint-config-only change
+  needlessly rebuilding + bouncing the NAS stack.
 - **CI now runs the unit suite (2026-07-28).** `test.yml`'s 3-OS matrix
   gained a Test step (`npm test`, the 44-case redact suite from a0f81c7)
   after Build — closes the residual from fleet-review issue #1, whose

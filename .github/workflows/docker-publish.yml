@@ -15,6 +15,11 @@ on:
       - ".env.example"
       - ".gitattributes"
       - ".github/workflows/test.yml"
+      - ".prettierignore"
+      - ".prettierrc.json"
+      - "eslint.config.js"
+      - ".githooks/**"
+      - ".gitleaks.toml"
   pull_request:
     branches: [main]
 
