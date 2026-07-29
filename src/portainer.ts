@@ -715,6 +715,7 @@ export class PortainerClient {
         createErr instanceof Error ? createErr.message : String(createErr);
       throw new Error(
         `Conversion failed AFTER source stack was deleted. The source stack "${sourceName}" (id ${sourceStackId}) on endpoint ${sourceEndpoint} no longer exists. To recover: re-run portainer_create_stack with name="${sourceName}", endpoint_id=${sourceEndpoint}, the compose YAML below, then re-add the env vars [${envKeys}] via the Portainer UI (their values are NOT included in this message — they remain protected). Original create error: ${origMsg}\n\n--- ORIGINAL COMPOSE YAML ---\n${composeContent}\n--- END COMPOSE YAML ---`,
+        { cause: createErr },
       );
     }
   }

@@ -257,6 +257,22 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   smoke (initialize, tools/list → 23 tools). Remaining `npm audit`
   highs are all the dev-only eslint chain (needs eslint 10 major —
   queued as a separate task).
+- **Dev-only eslint chain bumped to v10 (2026-07-28).** eslint ^9 →
+  ^10.8.0, @eslint/js ^9 → ^10.0.1, eslint-config-prettier ^9 →
+  ^10.1.8. typescript-eslint stays ^8.65.0 — its peer range already
+  covers eslint 10, no major needed. Clears the 5 high-severity
+  npm-audit findings (vulnerable minimatch/brace-expansion via
+  @eslint/config-array + @eslint/eslintrc — DoS via unbounded brace
+  expansion); `npm audit` now reports 0 vulnerabilities. Flat config
+  in eslint.config.js unchanged. ESLint 10's recommended set added
+  `preserve-caught-error`, which flagged the convert-stack recovery
+  throw in `convertStackToGit` — fixed properly by attaching
+  `{ cause: createErr }` (message text unchanged, so the MCP-facing
+  recovery payload is identical; the cause preserves the original
+  stack for server-side debugging). Verified: lint clean, typecheck
+  clean, 44/44 tests. Dev-only — no runtime deps touched, no Docker
+  image behavior change. These were npm-audit findings only; no open
+  Dependabot alerts existed for them (checked via API).
 - **CI now runs the unit suite (2026-07-28).** `test.yml`'s 3-OS matrix
   gained a Test step (`npm test`, the 44-case redact suite from a0f81c7)
   after Build — closes the residual from fleet-review issue #1, whose
