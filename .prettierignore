@@ -1,6 +1,7 @@
 dist
 node_modules
 .serena
+.claude
 package-lock.json
 
 # Hand-crafted markdown — keep current formatting
