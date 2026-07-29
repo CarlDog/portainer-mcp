@@ -246,6 +246,17 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   definition of "unused" includes brief stack-redeploy windows
   where containers detach temporarily). Manual cleanup via UI or
   CLI remains the safer pattern.
+- **Dependabot #31 cleared (2026-07-28).** Bumped
+  `@modelcontextprotocol/sdk` 1.29.0 → 1.30.0, which widened its
+  `@hono/node-server` range to `^1.19.9 || ^2.0.5`; lockfile now
+  resolves 2.0.12, past the path-traversal fix (GHSA, moderate,
+  Windows-only serve-static — low practical risk here since the
+  container is Linux and our HTTP transport is express, but cleared
+  properly rather than dismissed). package.json SDK floor raised to
+  `^1.30.0`. Verified: typecheck + build + 44/44 tests + local HTTP
+  smoke (initialize, tools/list → 23 tools). Remaining `npm audit`
+  highs are all the dev-only eslint chain (needs eslint 10 major —
+  queued as a separate task).
 - **CI now runs the unit suite (2026-07-28).** `test.yml`'s 3-OS matrix
   gained a Test step (`npm test`, the 44-case redact suite from a0f81c7)
   after Build — closes the residual from fleet-review issue #1, whose
