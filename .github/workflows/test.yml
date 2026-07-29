@@ -41,6 +41,9 @@ jobs:
       - name: Build
         run: npm run build
 
+      - name: Test
+        run: npm test
+
   quality:
     name: lint + format
     runs-on: ubuntu-latest

@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-06-04
+**Last updated:** 2026-07-28
 
 ## Phase
 
@@ -30,8 +30,9 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   (gitleaks + PII pattern scan from the start)
 - VS Code workspace config (settings, extensions, launch, tasks,
   `.code-workspace`) and ESLint + Prettier
-- GitHub Actions: `docker-publish.yml` (multi-arch GHCR) and `test.yml`
-  (typecheck/build matrix + lint/format quality job)
+- GitHub Actions: `docker-publish.yml` (GHCR, amd64-only since 7999754)
+  and `test.yml` (typecheck/build/test matrix + lint/format quality job;
+  the matrix runs the unit suite via `npm test` since 2026-07-28)
 - Project docs: CLAUDE.md, STATUS.md, README.md
 
 ## Done (post-scaffold)
@@ -245,6 +246,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   definition of "unused" includes brief stack-redeploy windows
   where containers detach temporarily). Manual cleanup via UI or
   CLI remains the safer pattern.
+- **CI now runs the unit suite (2026-07-28).** `test.yml`'s 3-OS matrix
+  gained a Test step (`npm test`, the 44-case redact suite from a0f81c7)
+  after Build — closes the residual from fleet-review issue #1, whose
+  Health note flagged that the Test workflow never executed tests. Also
+  added `.github/workflows/test.yml` to `docker-publish.yml`'s
+  `paths-ignore` (same reasoning as `.gitattributes` in 1388aa0: CI
+  config can't affect the image, so don't rebuild + bounce the stack).
 
 ## Next
 
@@ -433,4 +441,3 @@ None active. Decisions made during scaffolding:
     Cuts the payload ~50× even without a filter.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
-- No tests yet.
