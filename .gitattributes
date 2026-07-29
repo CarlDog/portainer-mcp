@@ -1,4 +1,11 @@
+# LF everywhere, including Windows checkouts — .prettierrc.json pins
+# endOfLine=lf, so a CRLF checkout (core.autocrlf) makes local
+# format:check fail on every file while CI (LF) stays green.
+* text=auto eol=lf
+
 # OpenAPI spec snapshots come from SwaggerHub with LF endings; locking
 # them prevents CRLF round-trip noise on Windows checkouts so diffs
-# from re-fetching stay reviewable.
+# from re-fetching stay reviewable. (Redundant under the repo-wide LF
+# rule above, but kept: it also forces text detection for the 441 KB
+# spec snapshot.)
 docs/specs/*.json text eol=lf
