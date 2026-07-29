@@ -273,6 +273,15 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   clean, 44/44 tests. Dev-only — no runtime deps touched, no Docker
   image behavior change. These were npm-audit findings only; no open
   Dependabot alerts existed for them (checked via API).
+- **LF checkouts enforced repo-wide (2026-07-28).** `.gitattributes`
+  gained `* text=auto eol=lf` — `.prettierrc.json` pins
+  `endOfLine=lf`, so Windows CRLF checkouts (core.autocrlf) made
+  local `format:check` fail on every file while CI stayed green. The
+  index was already fully LF (renormalize was a zero-diff no-op);
+  only working-tree materialization changes. Also added `.claude/` to
+  `.prettierignore` + eslint ignores so root-level prettier/eslint
+  runs stop walking into Claude Code worktrees under
+  `.claude/worktrees/`.
 - **CI now runs the unit suite (2026-07-28).** `test.yml`'s 3-OS matrix
   gained a Test step (`npm test`, the 44-case redact suite from a0f81c7)
   after Build — closes the residual from fleet-review issue #1, whose
