@@ -29,7 +29,7 @@ callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
 | `portainer_list_endpoints` | List all Portainer environments (Docker hosts/Swarms) |
 | `portainer_list_stacks` | List stacks (optionally filtered by endpoint) |
 | `portainer_get_stack` | Stack details (compose, env, status) by ID |
-| `portainer_list_containers` | List containers in an endpoint (optional all=true) |
+| `portainer_list_containers` | List containers (compact by default; name/label/status filters; full=true for raw JSON) |
 | `portainer_get_container` | Container details (state, config, networks, mounts) |
 | `portainer_container_logs` | Tail of container logs (1-5000 lines) |
 | `portainer_list_volumes` | List Docker volumes in an endpoint |

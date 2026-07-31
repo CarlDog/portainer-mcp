@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-07-28
+**Last updated:** 2026-07-30
 
 ## Phase
 
@@ -294,6 +294,20 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   added `.github/workflows/test.yml` to `docker-publish.yml`'s
   `paths-ignore` (same reasoning as `.gitattributes` in 1388aa0: CI
   config can't affect the image, so don't rebuild + bounce the stack).
+- **`portainer_list_containers` bounded + filterable (2026-07-30).**
+  The 2026-06-04 Next item, worked from the fleet queue: Docker's
+  native `filters` exposed as `name` / `label` / `status` params
+  (label maps stack → containers via `com.docker.compose.project`,
+  resolving the 2026-07-29 dogfooding incident's compose-name
+  archaeology in one call), plus a compact projection by default
+  (`Id`/`Names`/`Image`/`State`/`Status`/`Created`/`Ports`/
+  `ComposeProject`) with `full: true` for raw objects. A `status`
+  filter implies `all=true` — Docker's running-only window would
+  otherwise return [] for `status=exited` and look like a working
+  filter. Pure helpers `containerListQuery` + `compactContainer`
+  with table-driven tests (55-case suite total); verified live
+  against the NAS: 46/37/1/7 counts across filter variants, compact
+  payload 92% smaller (126.8 KB → 10.3 KB). v0.2.0.
 
 ## Next
 
@@ -313,18 +327,6 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   filter so callers can bound the payload under token limits.
   Highest-value read-tool improvement — surfaced while reading
   wobblebot's daemon logs from another session.
-- **Bound `portainer_list_containers` output + add filtering.**
-  Surfaced 2026-06-04 (see Known Gaps): the tool returns Docker's RAW full
-  container objects for EVERY container, so on the NAS (47 containers) the
-  result is ~169 KB / 4,592 lines — past the caller's token limit (had to
-  spill to a temp file + filter client-side just to find the 8 wobblebot
-  daemons during a soak check-in). Two small fixes: (1) expose Docker's
-  native `filters` (name / status / label) the same way `list_volumes`
-  already does — `?filters={"name":["wobblebot"]}` filters server-side;
-  (2) project to a compact summary by default (`Id` / `Names` / `Image` /
-  `State` / `Status` / `Created`) with an opt-in `full` flag for the raw
-  objects (the per-container detail already lives in
-  `portainer_get_container`). Sibling to the container-logs fix above.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level

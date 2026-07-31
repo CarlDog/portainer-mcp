@@ -109,6 +109,64 @@ export function redactSecrets(value: unknown): unknown {
   return value;
 }
 
+export interface ContainerListOptions {
+  all?: boolean;
+  name?: string;
+  label?: string;
+  status?: string;
+}
+
+// Builds the query for GET /containers/json. Filters use Docker's
+// JSON map-of-arrays encoding. A status filter implies all=true: Docker
+// only inspects the containers the `all` window admits, so status=exited
+// against the default running-only window silently returns [] — the
+// "ignored filter looks fine" trap.
+export function containerListQuery(
+  opts: ContainerListOptions,
+): Record<string, string> {
+  const filters: Record<string, string[]> = {};
+  if (opts.name) filters.name = [opts.name];
+  if (opts.label) filters.label = [opts.label];
+  if (opts.status) filters.status = [opts.status];
+  const query: Record<string, string> = {};
+  if (opts.all || opts.status) query.all = "true";
+  if (Object.keys(filters).length > 0) query.filters = JSON.stringify(filters);
+  return query;
+}
+
+// Compact projection for list output: full Docker list JSON runs to ~2 KB
+// per container (HostConfig, NetworkSettings, Mounts…), which eats the
+// caller's context window fleet-wide. Keeps what an operator scans for,
+// plus the compose project label that maps stack → containers.
+export function compactContainer(c: unknown): unknown {
+  if (c === null || typeof c !== "object" || Array.isArray(c)) return c;
+  const o = c as Record<string, unknown>;
+  const labels = (o.Labels ?? {}) as Record<string, unknown>;
+  const ports = Array.isArray(o.Ports)
+    ? [
+        ...new Set(
+          (o.Ports as Record<string, unknown>[]).map((p) =>
+            p.PublicPort !== undefined
+              ? `${String(p.IP ?? "")}:${String(p.PublicPort)}->${String(p.PrivatePort)}/${String(p.Type)}`
+              : `${String(p.PrivatePort)}/${String(p.Type)}`,
+          ),
+        ),
+      ]
+    : [];
+  const out: Record<string, unknown> = {
+    Id: typeof o.Id === "string" ? o.Id.slice(0, 12) : o.Id,
+    Names: o.Names,
+    Image: o.Image,
+    State: o.State,
+    Status: o.Status,
+    Created: o.Created,
+    Ports: ports,
+  };
+  const project = labels["com.docker.compose.project"];
+  if (project !== undefined) out.ComposeProject = project;
+  return out;
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -188,13 +246,14 @@ export class PortainerClient {
     return this.request("GET", `/api/stacks/${id}`);
   }
 
-  async listContainers(endpointId: number, all: boolean): Promise<unknown> {
-    const query: Record<string, string> = {};
-    if (all) query.all = "true";
+  async listContainers(
+    endpointId: number,
+    opts: ContainerListOptions = {},
+  ): Promise<unknown> {
     return this.request(
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/json`,
-      query,
+      containerListQuery(opts),
     );
   }
 
@@ -996,17 +1055,53 @@ export function registerPortainerTools(
     {
       title: "Portainer: List Containers",
       description:
-        "List containers in an endpoint. Set all=true to include stopped containers.",
+        "List containers in an endpoint (compact projection by default; set full=true for complete Docker JSON). Filter by name substring, label, or status. Set all=true to include stopped containers.",
       inputSchema: {
         endpoint_id: z.number().int().describe("Endpoint ID"),
         all: z
           .boolean()
           .optional()
           .describe("Include stopped containers (default false)"),
+        name: z
+          .string()
+          .optional()
+          .describe("Filter: container name substring"),
+        label: z
+          .string()
+          .optional()
+          .describe(
+            'Filter: label "key" or "key=value" — e.g. "com.docker.compose.project=myapp" lists a stack\'s containers',
+          ),
+        status: z
+          .enum([
+            "created",
+            "restarting",
+            "running",
+            "removing",
+            "paused",
+            "exited",
+            "dead",
+          ])
+          .optional()
+          .describe("Filter by container status (implies all=true)"),
+        full: z
+          .boolean()
+          .optional()
+          .describe(
+            "Return complete Docker JSON per container (default: compact projection)",
+          ),
       },
     },
-    async ({ endpoint_id, all }) =>
-      asText(await p.listContainers(endpoint_id, all ?? false)),
+    async ({ endpoint_id, all, name, label, status, full }) => {
+      const result = await p.listContainers(endpoint_id, {
+        all,
+        name,
+        label,
+        status,
+      });
+      if (full || !Array.isArray(result)) return asText(result);
+      return asText(result.map(compactContainer));
+    },
   );
 
   server.registerTool(
