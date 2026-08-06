@@ -37,3 +37,6 @@ venv/
 
 # Test output
 coverage/
+
+# Local agent state
+.serena/
