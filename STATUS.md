@@ -311,6 +311,25 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 
 ## Next
 
+- **Idea filed for future discussion (2026-08-05): a redacted-secret
+  fingerprint tool.** Surfaced live while debugging a real incident:
+  plex-companion's `KINDROID_MCP_TOKEN` and kindroid-mcp's own
+  `MCP_AUTH_TOKEN` were supposed to be the same value (a cut/paste
+  dropped a character), and there was no way to check equality without
+  either exposing the raw values or getting NAS shell access — the
+  redactor (working as designed) strips both from every read tool
+  here, and there's no exec-into-container capability at all. Direction
+  to explore later: a narrow read tool (e.g.
+  `portainer_container_env_fingerprint(container_id, endpoint_id,
+  var_name)`) that fetches the one named env var via the existing
+  noRedact-style internal path and returns ONLY a SHA-256 digest (or an
+  8-char prefix) of its value — never the plaintext. Two containers'
+  same-purpose secrets can then be compared for equality (same digest
+  = same value) without either value ever crossing the MCP wire. Same
+  safety shape as a git commit hash or npm integrity hash: a
+  non-reversible fingerprint, not a secret itself. Scope stays narrow —
+  one var by name, hash-only response, no bulk/wildcard fingerprinting
+  that could turn into a redactor bypass. Not scoped, not started.
 - Add tests once a real Portainer test target is set up. Highest
   ROI: regression coverage for the env round-trip on both redeploy
   variants AND the convert tool — those are the paths most likely
