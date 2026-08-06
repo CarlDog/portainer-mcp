@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-07-30
+**Last updated:** 2026-08-05
 
 ## Phase
 
@@ -308,6 +308,20 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   with table-driven tests (55-case suite total); verified live
   against the NAS: 46/37/1/7 counts across filter variants, compact
   payload 92% smaller (126.8 KB → 10.3 KB). v0.2.0.
+- **Dependabot alerts #42–44 cleared (2026-08-05).** All three were
+  the same root cause: `undici` resolved to 6.27.0 in the lockfile
+  even though package.json's existing `^6.0.0` range already covered
+  the fix. Bumped to 6.28.0 (also the latest 6.x) clears all three —
+  downstream response desync via the retry interceptor, cookie
+  attribute injection via unsanitized `domain`/unparsed `setCookie`,
+  and CRLF injection via a blob-like body's `type` property.
+  Lockfile-only change; package.json untouched. Also bumped
+  `brace-expansion` (dev-only, via eslint→minimatch) to 5.0.9,
+  clearing a high-severity DoS finding that `npm audit` still flagged
+  locally even though GitHub had auto-dismissed the corresponding
+  alert (#40) for its own reasons — no runtime impact either way,
+  since it's dev-only. Verified: typecheck + build + lint + format +
+  55/55 tests all clean; `npm audit` now reports 0 vulnerabilities.
 
 ## Next
 
