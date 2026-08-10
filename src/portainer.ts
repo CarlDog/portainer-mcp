@@ -1,5 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
-import { Agent } from "undici";
+import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 import { z } from "zod";
 import { asText } from "./util.js";
 
@@ -9,7 +9,10 @@ export interface PortainerConfig {
   verifyTls: boolean;
 }
 
-interface FetchInitWithDispatcher extends RequestInit {
+interface PortainerRequestInit {
+  method: Dispatcher.HttpMethod;
+  headers: Record<string, string>;
+  body?: string;
   dispatcher?: Agent;
 }
 
@@ -200,8 +203,8 @@ export class PortainerClient {
       bodyStr = JSON.stringify(body);
       headers["Content-Type"] = "application/json";
     }
-    const init: FetchInitWithDispatcher = {
-      method,
+    const init: PortainerRequestInit = {
+      method: method as Dispatcher.HttpMethod,
       headers,
     };
     // Only attach `body` when we actually have one. Setting `init.body =
@@ -215,19 +218,32 @@ export class PortainerClient {
     if (this.insecureDispatcher) {
       init.dispatcher = this.insecureDispatcher;
     }
-    const res = await fetch(url, init as RequestInit);
-    if (!res.ok) {
-      const errBody = await res.text().catch(() => "");
+    // Must be undici's own request(), NOT global fetch. Node's global fetch
+    // is backed by the undici copy bundled inside Node, so an Agent built
+    // from this package is a foreign object to it and the `dispatcher`
+    // option may be silently ignored — which drops
+    // `connect.rejectUnauthorized: false` and makes every call to a
+    // self-signed Portainer fail with a bare "fetch failed". That is exactly
+    // what the node:22-alpine -> node:26-alpine bump did in production.
+    // Going through undici directly keeps the Agent and the request in one
+    // module instance, so the dispatcher is always honored.
+    const res = await undiciRequest(url, init);
+    const status = res.statusCode;
+    if (status < 200 || status >= 300) {
+      const errBody = await res.body.text().catch(() => "");
       throw new Error(
-        `Portainer ${res.status} ${res.statusText} for ${method} ${path}: ${errBody.slice(0, 200)}`,
+        `Portainer ${status} for ${method} ${path}: ${errBody.slice(0, 200)}`,
       );
     }
-    const ctype = res.headers.get("content-type") ?? "";
+    const ctypeHeader = res.headers["content-type"];
+    const ctype = Array.isArray(ctypeHeader)
+      ? (ctypeHeader[0] ?? "")
+      : (ctypeHeader ?? "");
     if (ctype.includes("application/json")) {
-      const data = (await res.json()) as unknown;
+      const data = (await res.body.json()) as unknown;
       return (opts?.noRedact ? data : redactSecrets(data)) as T;
     }
-    return (await res.text()) as unknown as T;
+    return (await res.body.text()) as unknown as T;
   }
 
   async listEndpoints(): Promise<unknown> {
