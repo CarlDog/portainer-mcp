@@ -1,4 +1,5 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import { createHash, timingSafeEqual } from "node:crypto";
 import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 import { z } from "zod";
 import { asText } from "./util.js";
@@ -201,6 +202,49 @@ export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
   return { result, imagePrune };
 }
 
+export interface EnvSideRaw {
+  found: boolean;
+  value: string;
+}
+
+export interface EnvSideResult {
+  found: boolean;
+  empty: boolean;
+}
+
+export interface CompareEnvValuesResult {
+  match: boolean;
+  a: EnvSideResult;
+  b: EnvSideResult;
+}
+
+// Pure comparison logic, separated from the HTTP fetch so it's unit
+// testable without mocking a live Portainer instance. An empty or missing
+// value on either side is never treated as a match, even against another
+// empty/missing value — an unset var matching another unset var isn't a
+// meaningful "these secrets agree" signal.
+export function compareEnvValuesResult(
+  rawA: EnvSideRaw,
+  rawB: EnvSideRaw,
+): CompareEnvValuesResult {
+  const sideA: EnvSideResult = {
+    found: rawA.found,
+    empty: rawA.found && rawA.value === "",
+  };
+  const sideB: EnvSideResult = {
+    found: rawB.found,
+    empty: rawB.found && rawB.value === "",
+  };
+  const comparable = !sideA.empty && !sideB.empty && rawA.found && rawB.found;
+  const match =
+    comparable &&
+    timingSafeEqual(
+      createHash("sha256").update(rawA.value).digest(),
+      createHash("sha256").update(rawB.value).digest(),
+    );
+  return { match, a: sideA, b: sideB };
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -312,6 +356,48 @@ export class PortainerClient {
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/${containerId}/json`,
     );
+  }
+
+  // Internal-only: fetches one raw (unredacted) env var value for the
+  // fingerprint comparison below. Never returned to an MCP caller directly —
+  // only its hash is. See compareEnvValues.
+  private async getContainerEnvValueRaw(
+    endpointId: number,
+    containerId: string,
+    varName: string,
+  ): Promise<{ found: boolean; value: string }> {
+    interface RawContainer {
+      Config?: { Env?: string[] };
+    }
+    const container = await this.request<RawContainer>(
+      "GET",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}/json`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    const prefix = `${varName}=`;
+    const entry = (container.Config?.Env ?? []).find((e) =>
+      e.startsWith(prefix),
+    );
+    return entry === undefined
+      ? { found: false, value: "" }
+      : { found: true, value: entry.slice(prefix.length) };
+  }
+
+  // Compares two containers' env values for equality without either value
+  // (or a hash of it) ever crossing the MCP wire — only a boolean. Fetches
+  // both raw values server-side; see compareEnvValuesResult for the
+  // comparison logic itself.
+  async compareEnvValues(
+    a: { endpointId: number; containerId: string; varName: string },
+    b: { endpointId: number; containerId: string; varName: string },
+  ): Promise<CompareEnvValuesResult> {
+    const [rawA, rawB] = await Promise.all([
+      this.getContainerEnvValueRaw(a.endpointId, a.containerId, a.varName),
+      this.getContainerEnvValueRaw(b.endpointId, b.containerId, b.varName),
+    ]);
+    return compareEnvValuesResult(rawA, rawB);
   }
 
   async containerLogs(
@@ -1247,6 +1333,42 @@ export function registerPortainerTools(
     },
     async ({ endpoint_id, container_id }) =>
       asText(await p.getContainer(endpoint_id, container_id)),
+  );
+
+  server.registerTool(
+    "portainer_compare_env_values",
+    {
+      title: "Portainer: Compare Two Env Values",
+      description:
+        "Check whether two containers' env var values are equal, without ever exposing either value. Fetches both raw values server-side, hashes them, and returns only match: true/false plus found/empty flags for each side — never the values or a hash of them. Use this instead of eyeballing two redacted portainer_get_container results when two services are supposed to share a secret (e.g. a shared bearer token between a client and the service it authenticates to) and you need to confirm they actually match. An empty or missing value on either side is never reported as a match, even against another empty/missing value.",
+      inputSchema: {
+        a: z.object({
+          endpoint_id: z.number().int().describe("Endpoint ID for side A"),
+          container_id: z.string().describe("Container ID or name for side A"),
+          var_name: z.string().describe("Env var name to compare on side A"),
+        }),
+        b: z.object({
+          endpoint_id: z.number().int().describe("Endpoint ID for side B"),
+          container_id: z.string().describe("Container ID or name for side B"),
+          var_name: z.string().describe("Env var name to compare on side B"),
+        }),
+      },
+    },
+    async ({ a, b }) =>
+      asText(
+        await p.compareEnvValues(
+          {
+            endpointId: a.endpoint_id,
+            containerId: a.container_id,
+            varName: a.var_name,
+          },
+          {
+            endpointId: b.endpoint_id,
+            containerId: b.container_id,
+            varName: b.var_name,
+          },
+        ),
+      ),
   );
 
   server.registerTool(

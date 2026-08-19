@@ -17,7 +17,7 @@ Sister to [`plex-mcp`](https://github.com/CarlDog/plex-mcp),
 
 ## Tools
 
-25 tools: 10 read tools plus 15 write tools with real side effects
+26 tools: 11 read tools plus 15 write tools with real side effects
 (container lifecycle, stack create/update/redeploy/delete). Secrets in
 Portainer/Docker responses are redacted client-side before reaching MCP
 callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
@@ -38,6 +38,7 @@ itself, no separate call or schedule needed.
 | `portainer_get_stack` | Stack details (compose, env, status) by ID |
 | `portainer_list_containers` | List containers (compact by default; name/label/status filters; full=true for raw JSON) |
 | `portainer_get_container` | Container details (state, config, networks, mounts) |
+| `portainer_compare_env_values` | Check whether two containers' env values are equal, without exposing either one |
 | `portainer_container_logs` | Tail of container logs (1-5000 lines) |
 | `portainer_list_volumes` | List Docker volumes in an endpoint |
 | `portainer_inspect_volume` | Volume details by name |

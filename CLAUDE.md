@@ -159,6 +159,20 @@ docker build -t portainer-mcp .
   surface. Use stack-level env vars + `${VAR}` references in compose
   to stay covered. See STATUS.md Known Gaps.
 
+  **Comparing two redacted secrets — `portainer_compare_env_values`
+  (2026-08-19).** Redaction is correct but creates its own gap: two
+  services that are supposed to share a value (e.g. a shared bearer
+  token) can't be checked for equality by eyeballing two
+  `portainer_get_container`/`portainer_get_stack` results, since both
+  show `<redacted>` regardless of whether the underlying values match.
+  This tool fetches both raw values server-side (`noRedact`), hashes
+  them (SHA-256, constant-time compare), and returns only
+  `match: true/false` plus `found`/`empty` flags per side — never the
+  values, never a hash. Deliberately stateless (no hash is stored) to
+  match this codebase's existing stateless design — see STATUS.md
+  "Design Principles" for why a store-hash-at-write-time variant was
+  considered and rejected in favor of this on-demand version.
+
 - **Secrets in tool INPUTS, not just outputs.** The redactor above
   protects responses Portainer returns to us; it does NOT protect
   secrets the user passes INTO tools as parameters. Three existing
@@ -204,13 +218,13 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-25 tools registered in `src/portainer.ts` — 10 read tools (endpoints,
-stacks, containers, logs, volumes, images, system status) and 15 write
-tools (container start/stop/restart/kill/recreate; stack create/update/
-env/redeploy/git-convert/delete; git auth; image prune). The v1
-"read-only initial scope" is history — see STATUS.md for the
-authoritative per-tool chronology and the README for the current tool
-table.
+26 tools registered in `src/portainer.ts` — 11 read tools (endpoints,
+stacks, containers, logs, volumes, images, system status, env-value
+comparison) and 15 write tools (container start/stop/restart/kill/
+recreate; stack create/update/env/redeploy/git-convert/delete; git
+auth; image prune). The v1 "read-only initial scope" is history — see
+STATUS.md for the authoritative per-tool chronology and the README for
+the current tool table.
 
 Write tools have real blast radius (`portainer_delete_stack` removes a
 stack and all its containers; `portainer_container_kill` is SIGKILL).

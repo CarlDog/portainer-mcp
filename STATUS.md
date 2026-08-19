@@ -447,28 +447,39 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   `portainer_prune_images` (or the next MCP-driven redeploy of *any*
   stack on this endpoint, since prune targets the whole endpoint) will
   clean up. Not fixed; flagging so it isn't mistaken for full coverage.
+- **`portainer_compare_env_values` (2026-08-19).** Resolves the
+  redacted-secret-fingerprint idea filed 2026-08-05 (below, in Next
+  until now). Checks whether two containers' env values are equal
+  without exposing either one: fetches both raw values server-side
+  via the existing `noRedact` path, hashes with SHA-256, and does a
+  constant-time digest comparison — returns only `match: true/false`
+  plus `found`/`empty` flags per side. Pure comparison logic
+  extracted as `compareEnvValuesResult` for unit testing (8 new
+  cases, including one asserting the result object's JSON never
+  contains the compared values) — 73/73 total. **Design choice
+  discussed with the user before building:** considered a
+  store-hash-at-write-time variant for drift detection (has a secret
+  changed since it was last verified) instead of pairwise comparison.
+  Rejected for now — it's a genuinely different feature (drift
+  detection vs. equality-check), and this codebase is deliberately
+  stateless (CLAUDE.md: "the container is stateless... no per-session
+  state"); the session's own AutoUpdate self-redeploy and the
+  self-redeploy-skips-auto-prune gap (both above) are exactly the
+  kind of event that would silently wipe or orphan a "temporary" hash
+  store. The shipped on-demand version needs no storage, no TTL, and
+  fully solves the equality-check case that actually came up (the
+  2026-08-05 KINDROID_MCP_TOKEN mismatch, and 2026-08-19's "does this
+  new plex-companion token match kindroid-mcp's" question). Revisit
+  drift detection separately if a real need for it shows up.
 
 ## Next
 
-- **Idea filed for future discussion (2026-08-05): a redacted-secret
-  fingerprint tool.** Surfaced live while debugging a real incident:
-  plex-companion's `KINDROID_MCP_TOKEN` and kindroid-mcp's own
-  `MCP_AUTH_TOKEN` were supposed to be the same value (a cut/paste
-  dropped a character), and there was no way to check equality without
-  either exposing the raw values or getting NAS shell access — the
-  redactor (working as designed) strips both from every read tool
-  here, and there's no exec-into-container capability at all. Direction
-  to explore later: a narrow read tool (e.g.
-  `portainer_container_env_fingerprint(container_id, endpoint_id,
-  var_name)`) that fetches the one named env var via the existing
-  noRedact-style internal path and returns ONLY a SHA-256 digest (or an
-  8-char prefix) of its value — never the plaintext. Two containers'
-  same-purpose secrets can then be compared for equality (same digest
-  = same value) without either value ever crossing the MCP wire. Same
-  safety shape as a git commit hash or npm integrity hash: a
-  non-reversible fingerprint, not a secret itself. Scope stays narrow —
-  one var by name, hash-only response, no bulk/wildcard fingerprinting
-  that could turn into a redactor bypass. Not scoped, not started.
+- ~~Idea filed for future discussion (2026-08-05): a redacted-secret
+  fingerprint tool.~~ **Shipped 2026-08-19 as `portainer_compare_env_values`**
+  — see Done above for the full writeup, including the design
+  discussion around a store-hash-at-write-time alternative that was
+  considered and rejected in favor of the stateless on-demand version
+  actually shipped.
 - Add tests once a real Portainer test target is set up. Highest
   ROI: regression coverage for the env round-trip on both redeploy
   variants AND the convert tool — those are the paths most likely
