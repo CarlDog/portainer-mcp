@@ -214,6 +214,17 @@ Known gap: a stack redeploy triggered by Portainer's own git-auto-update
 polling (no MCP call involved) doesn't go through these tools, so it
 isn't covered by this mechanism.
 
+**Second known gap — self-redeploy (confirmed live 2026-08-18).**
+Redeploying portainer-mcp's *own* stack doesn't get the auto-prune: the
+redeploy replaces the very container whose process is handling that
+request, and the process is killed as part of the swap before it reaches
+the `pruneDanglingAfterRedeploy` call — same root cause as the
+documented in-flight-connection-drop quirk on these tools' descriptions.
+Redeploying any *other* stack is unaffected (that calling process stays
+alive to finish the request). Mitigation: after a portainer-mcp
+self-redeploy, follow up with one manual `portainer_prune_images` call.
+See STATUS.md for the live-verified details.
+
 ## Testing
 
 - `npm test` — `node --test` (via tsx) over `test/*.test.ts`.

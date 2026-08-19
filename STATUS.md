@@ -356,10 +356,35 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     our tools in that path. Most of this fleet's redeploys go through
     these tools already, so the gap is believed small, but it means this
     isn't 100% coverage of every possible redeploy source.
+  - **Second known gap, found live on first deploy (2026-08-18):**
+    `portainer_redeploy_stack`/`_update_stack_file`/`_redeploy_git_stack`/
+    `_recreate_container` redeploying **portainer-mcp's own stack** don't
+    get the auto-prune either — for a different reason than the git-
+    auto-update gap. The redeploy replaces the very container whose
+    process is handling that HTTP request; Portainer's PUT completes and
+    swaps the container, but the calling process gets killed as part of
+    that swap before it reaches the `pruneDanglingAfterRedeploy` call
+    (same root cause as the documented in-flight-connection-drop quirk
+    on these tools — the response is lost for the identical reason).
+    Confirmed live: redeploying stack 129 (portainer-mcp) with the new
+    code left `ghcr.io/carldog/portainer-mcp:<none>` sitting `used:
+    false`; a manual `portainer_prune_images` call cleaned it up (7
+    images, 17.4 MB). Not fixable by re-ordering the client code — the
+    process is gone, there's nothing left to run a follow-up call. Any
+    *other* stack's redeploy is unaffected (that calling process stays
+    alive to finish the request) — this is specific to self-redeploy.
+    Practical mitigation: after redeploying portainer-mcp's own stack,
+    follow up with one manual `portainer_prune_images` call.
   - Pure helpers `imagePruneQuery` + `withImagePrune`, table-driven tests
     (9 new cases; 65/65 total). Typecheck/lint/format/build all clean.
-    Not yet smoke-tested against the live NAS deployment — do that before
-    or immediately after the next image publish + redeploy.
+    **Smoke-tested live against the NAS 2026-08-18:** pushed → CI
+    published `ghcr.io/carldog/portainer-mcp:latest` → redeployed stack
+    129 via `portainer_redeploy_stack` → verified via
+    `portainer_get_container` that the running container's
+    `org.opencontainers.image.revision` label matched the pushed commit
+    SHA and the healthcheck was green → `portainer_list_images` correctly
+    showed the superseded digest as `used: false` → `portainer_prune_images`
+    removed it and reclaimed 17.4 MB, verified gone on a follow-up list.
   - Tool count: 23 → 25 (10 read, 15 write). `CLAUDE.md`'s stale
     "Phase: scaffolding" line (long superseded by the deployed-and-
     verified phase this file already describes) was also fixed while
