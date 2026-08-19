@@ -389,6 +389,27 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     "Phase: scaffolding" line (long superseded by the deployed-and-
     verified phase this file already describes) was also fixed while
     touching that section.
+- **`docker-compose.yml` was missing `network_mode: bridge` that the
+  live stack already had (found 2026-08-18, mid-conversion to git-
+  managed).** The deployed stack's actual compose (confirmed both from
+  the operator's copy of the live Portainer stack file and independently
+  from `portainer_get_container`'s `HostConfig.NetworkMode: "bridge"`)
+  carries `network_mode: bridge`; the repo's committed compose didn't.
+  Root cause: the fleet-wide single-container → `network_mode: bridge`
+  migration (`docker-deployments.md` rule 11, ~24 stacks migrated to fix
+  the NAS's Docker IPv4 address-pool exhaustion) was applied operationally
+  in Portainer but never round-tripped back into this repo. Caught before
+  it caused damage — converting to a git-managed stack pulls the repo's
+  compose as source of truth, so deploying the (until now) stale repo
+  version would have silently dropped this stack back onto its own
+  dedicated network and reintroduced the pool-exhaustion risk. Fixed by
+  adding `network_mode: bridge` to `docker-compose.yml`, matching live
+  state exactly (single-container stack, no other service needs
+  container-name DNS — the correct case per rule 11). This bumps the
+  image digest and republishes on push (docker-compose.yml isn't in
+  `docker-publish.yml`'s `paths-ignore`), so expect one more container
+  bounce before the git-managed conversion, independent of that
+  conversion itself.
 
 ## Next
 

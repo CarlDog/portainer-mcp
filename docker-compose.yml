@@ -4,6 +4,7 @@ services:
     pull_policy: always
     container_name: portainer-mcp
     restart: unless-stopped
+    network_mode: bridge
     extra_hosts:
       # Resolves the Docker host from inside the container. Needed when
       # PORTAINER_URL points at the host's HTTPS port (e.g. when this
