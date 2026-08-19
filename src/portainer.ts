@@ -726,8 +726,17 @@ export class PortainerClient {
       env?: Array<{ name: string; value: string }>;
       username?: string;
       password?: string;
+      gitCredentialId?: number;
     },
   ): Promise<unknown> {
+    if (
+      spec.gitCredentialId !== undefined &&
+      (spec.username !== undefined || spec.password !== undefined)
+    ) {
+      throw new Error(
+        "Provide either git_credential_id or username/password for git auth, not both.",
+      );
+    }
     // Same pre-flight name-collision check as createStack — refuse if any
     // stack on this endpoint already shares the name. Catches the silent
     // Swarm-stack nuke trap and prevents accidental overwrites.
@@ -752,11 +761,20 @@ export class PortainerClient {
       ComposeFile: spec.composePath ?? "docker-compose.yml",
       Env: spec.env ?? [],
     };
-    // Only set the auth fields if either credential was provided. Public
-    // repos don't need them; passing empty strings would still flip
-    // RepositoryAuthentication=true and could confuse Portainer's
+    // Only set the auth fields if a credential was provided, one way or the
+    // other. Public repos don't need them; passing empty strings would still
+    // flip RepositoryAuthentication=true and could confuse Portainer's
     // internal credential resolution.
-    if (spec.username !== undefined || spec.password !== undefined) {
+    if (spec.gitCredentialId !== undefined) {
+      // References an existing stored Portainer credential (Settings > Git
+      // credentials) by id — nothing secret transits this call. Field name
+      // confirmed 2026-08-19 by reading Portainer's served frontend bundle
+      // (matches the read-side GitConfig.Authentication.GitCredentialID
+      // shape) and live-verified against CE 2.39.6 with a throwaway
+      // create-stack call.
+      body.RepositoryAuthentication = true;
+      body.RepositoryGitCredentialID = spec.gitCredentialId;
+    } else if (spec.username !== undefined || spec.password !== undefined) {
       body.RepositoryAuthentication = true;
       body.RepositoryUsername = spec.username ?? "";
       body.RepositoryPassword = spec.password ?? "";
@@ -777,9 +795,21 @@ export class PortainerClient {
       composePath?: string;
       username?: string;
       password?: string;
+      gitCredentialId?: number;
       confirmName: string;
     },
   ): Promise<unknown> {
+    // Validate up front, before the source stack is touched. createGitStack
+    // repeats this check, but by then the delete below would already have
+    // happened — exactly the atomicity risk this tool's own docs warn about.
+    if (
+      spec.gitCredentialId !== undefined &&
+      (spec.username !== undefined || spec.password !== undefined)
+    ) {
+      throw new Error(
+        "Provide either git_credential_id or username/password for git auth, not both.",
+      );
+    }
     interface RawEnvEntry {
       name?: string;
       Name?: string;
@@ -861,6 +891,7 @@ export class PortainerClient {
         env: sourceEnv,
         username: spec.username,
         password: spec.password,
+        gitCredentialId: spec.gitCredentialId,
       });
     } catch (createErr) {
       // Recovery payload — env keys only (NEVER values; we don't want
@@ -1640,7 +1671,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Create Git-Managed Stack",
       description:
-        "Create a new git-managed standalone Compose stack — Portainer clones the repo at the specified ref and deploys the compose file from inside it. Future redeploys via portainer_redeploy_git_stack will pull the latest commit. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint. SECURITY NOTE: the password parameter (PAT/token for private repos) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate.",
+        "Create a new git-managed standalone Compose stack — Portainer clones the repo at the specified ref and deploys the compose file from inside it. Future redeploys via portainer_redeploy_git_stack will pull the latest commit. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint. For a private repo, prefer git_credential_id (references an existing stored Portainer credential — nothing secret transits this call) over username/password. SECURITY NOTE: if you do pass username/password, the password (PAT/token) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate. git_credential_id and username/password are mutually exclusive.",
       inputSchema: {
         name: z
           .string()
@@ -1689,7 +1720,14 @@ export function registerPortainerTools(
           .string()
           .optional()
           .describe(
-            "Git auth password / Personal Access Token (private repos only). Visible in tool-call logs — use a scoped read-only token.",
+            "Git auth password / Personal Access Token (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
+          ),
+        git_credential_id: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
           ),
         confirm: z
           .literal(true)
@@ -1705,6 +1743,7 @@ export function registerPortainerTools(
       env,
       username,
       password,
+      git_credential_id,
     }) =>
       asText(
         await p.createGitStack(endpoint_id, {
@@ -1715,6 +1754,7 @@ export function registerPortainerTools(
           env,
           username,
           password,
+          gitCredentialId: git_credential_id,
         }),
       ),
   );
@@ -1724,7 +1764,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Convert File-Based Stack to Git-Managed",
       description:
-        "Convert an existing file-based Compose/Swarm stack into a git-managed one in one atomic operation. Reads the source stack's real env (including secret values, server-side, never exposed to tool-call logs), deletes the source, then creates a new git-managed stack with the same name and endpoint, inheriting the env. Requires two-factor confirm: confirm: true AND confirm_name matching the source stack's actual Name. ATOMICITY RISK: the delete happens before the create. If the create fails (bad repo URL, malformed compose at HEAD, network issue), the source is gone and the error includes a recovery payload with the original compose YAML + the env key NAMES so you can rebuild via portainer_create_stack and re-add env values via the Portainer UI. NEW STACK USES THE REPO'S COMPOSE — if the repo's docker-compose.yml differs from the source's (different ports, volumes, etc.), the new stack picks up the repo's values. SELF-CONVERSION WARNING: do not run this against the portainer-mcp stack itself — the call dies mid-flight when portainer-mcp is killed.",
+        "Convert an existing file-based Compose/Swarm stack into a git-managed one in one atomic operation. Reads the source stack's real env (including secret values, server-side, never exposed to tool-call logs), deletes the source, then creates a new git-managed stack with the same name and endpoint, inheriting the env. Requires two-factor confirm: confirm: true AND confirm_name matching the source stack's actual Name. ATOMICITY RISK: the delete happens before the create. If the create fails (bad repo URL, malformed compose at HEAD, network issue, or — for a private repo — missing/invalid credentials) the source is gone and the error includes a recovery payload with the original compose YAML + the env key NAMES so you can rebuild via portainer_create_stack and re-add env values via the Portainer UI. For a private repo, prefer git_credential_id (references an existing stored Portainer credential) over username/password — both are validated up front, before the source stack is touched, so a bad combination refuses cleanly rather than deleting first. NEW STACK USES THE REPO'S COMPOSE — if the repo's docker-compose.yml differs from the source's (different ports, volumes, etc.), the new stack picks up the repo's values. SELF-CONVERSION WARNING: do not run this against the portainer-mcp stack itself — the call dies mid-flight when portainer-mcp is killed. This tool is the right, safer choice for every OTHER stack — prefer it over a manual delete-and-recreate through the UI, which silently drops any env var the operator forgets to retype.",
       inputSchema: {
         source_stack_id: z
           .number()
@@ -1756,7 +1796,14 @@ export function registerPortainerTools(
           .string()
           .optional()
           .describe(
-            "Git auth password / PAT (private repos only). Visible in tool-call logs — use a scoped read-only token.",
+            "Git auth password / PAT (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
+          ),
+        git_credential_id: z
+          .number()
+          .int()
+          .optional()
+          .describe(
+            "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
           ),
         confirm_name: z
           .string()
@@ -1778,6 +1825,7 @@ export function registerPortainerTools(
       compose_path,
       username,
       password,
+      git_credential_id,
       confirm_name,
     }) =>
       asText(
@@ -1787,6 +1835,7 @@ export function registerPortainerTools(
           composePath: compose_path,
           username,
           password,
+          gitCredentialId: git_credential_id,
           confirmName: confirm_name,
         }),
       ),

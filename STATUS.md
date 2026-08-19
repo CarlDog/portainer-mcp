@@ -600,29 +600,53 @@ None active. Decisions made during scaffolding:
 - **`portainer_convert_stack_to_git`'s delete-then-create atomicity
   risk is not limited to self-conversion — confirmed live 2026-08-19
   on plex-companion (stack 168, private repo, no credentials
-  passed).** The tool's own docstring only warns about converting
-  portainer-mcp's *own* stack (the process dies mid-call). It does
+  passed).** The tool's own docstring only warned about converting
+  portainer-mcp's *own* stack (the process dies mid-call). It did
   NOT warn that ANY stack pointing at a private repo, called without
-  `username`/`password`, hits the identical delete-succeeds/
-  create-fails hole — `authentication required: Repository not
-  found` from the create step, after the source stack (and its
-  running container) is already gone. Full outage, not just a
-  stack-record loss; `portainer_list_containers` confirmed the
-  container itself was removed too. Recovered via
-  `portainer_create_stack` using the tool's own recovery payload
-  (compose YAML verbatim + env key names) plus values reconstructed
-  from earlier session context — 3 of 24 env vars (real secrets)
-  were unrecoverable and left blank pending manual re-entry. Two
-  fixes worth doing, neither started: (1) the tool description should
-  warn generally — "will fail for any private-repo target called
-  without credentials, not just self-conversion" — rather than only
-  the self-conversion case; (2) the tool could pre-flight-check repo
-  reachability/auth *before* deleting the source stack, converting
-  this from an outage into a clean refusal (mirrors the existing
-  name-collision pre-flight on `create_stack`/`create_git_stack`).
-  See OC memory `ed84beab-5398-4142-a032-cdd27a60bd70` for full
-  incident detail including the still-open git-credential-ID
-  investigation this triggered.
+  credentials, hits the identical delete-succeeds/create-fails hole —
+  `authentication required: Repository not found` from the create
+  step, after the source stack (and its running container) is
+  already gone. Full outage, not just a stack-record loss;
+  `portainer_list_containers` confirmed the container itself was
+  removed too. Recovered via `portainer_create_stack` using the
+  tool's own recovery payload (compose YAML verbatim + env key
+  names) plus values reconstructed from earlier session context —
+  3 of 24 env vars (real secrets) were unrecoverable and left blank
+  pending manual re-entry. Two fixes identified:
+  - **Done 2026-08-19: broadened the tool description.** Now states
+    the general private-repo failure mode (not just self-conversion)
+    and proactively says the tool is the right, safer choice for
+    every *other* stack vs. a manual UI delete-and-recreate — closing
+    the AI-behavior gap recorded in the fleet lesson
+    `2026-08-19-manual-git-stack-recreation-drops-env-vars`.
+  - **Done 2026-08-19: `git_credential_id` param on both
+    `portainer_create_git_stack` and `portainer_convert_stack_to_git`.**
+    Removes the actual root cause of this incident — no more calling
+    either tool against a private repo with no credentials at all.
+    References an existing Portainer-stored credential by id, so
+    nothing secret transits the tool call; mutually exclusive with
+    `username`/`password`, validated up front in both client methods
+    (in `convertStackToGit`, specifically *before* the delete step, so
+    a bad combination now refuses cleanly instead of deleting the
+    source first). Wire field `RepositoryGitCredentialID` confirmed by
+    reading Portainer's served frontend bundle and live-verified
+    against CE 2.39.6 (throwaway create with a deliberately
+    nonexistent compose path — proved the credential-based git clone
+    succeeded before failing cleanly on the intentional bad path, zero
+    orphaned state). See CLAUDE.md "Secrets in tool INPUTS" for the
+    field-level detail.
+  - **Still open:** pre-flight-checking repo reachability/auth
+    *before* deleting the source stack in `convert_stack_to_git`,
+    converting a bad-repo-URL or truly-missing-credential case from an
+    outage into a clean refusal (mirrors the existing name-collision
+    pre-flight on `create_stack`/`create_git_stack`). Lower priority
+    now that `git_credential_id` removes the most common way to hit
+    this in practice, but the underlying delete-before-create
+    ordering is still there for other failure modes (bad ref, bad
+    compose path, network blip).
+  See OC memory `ed84beab-5398-4142-a032-cdd27a60bd70` (incident) and
+  `d6baf633-1609-4a0d-b097-f6a28999691d` (git-credential-ID
+  resolution) for full detail.
 - ~~No regression test for the redactor yet committed.~~ Resolved
   2026-07-12: `test/redact.test.ts` (44 table-driven cases, `node
   --test` via `npm test`) covers key-name matching (incl. the new

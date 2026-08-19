@@ -174,6 +174,25 @@ docker build -t portainer-mcp .
   (e.g. registry credential update, named git credential CRUD —
   keep those as UI operations). See STATUS.md "Design Principles"
   for the full reasoning.
+  - **Better option for `create_git_stack` / `convert_stack_to_git`:
+    `git_credential_id` (2026-08-19).** Both tools now accept an
+    optional `git_credential_id`, referencing an existing credential
+    stored in Portainer (Settings > Git credentials), as an
+    alternative to `username`/`password`. Nothing secret transits
+    the tool call at all — the credential lives server-side in
+    Portainer, referenced only by its numeric id. Mutually exclusive
+    with `username`/`password`; both client methods validate this
+    up front (before `convertStackToGit`'s delete step, specifically,
+    so a bad combination refuses cleanly instead of deleting the
+    source first). Wire field is `RepositoryGitCredentialID`
+    (PascalCase, matches the read-side `GitConfig.Authentication.
+    GitCredentialID` shape) — confirmed by reading Portainer's own
+    served frontend bundle and live-verified against CE 2.39.6 with
+    a throwaway create-stack call using a deliberately nonexistent
+    compose path (so no container could ever be created regardless
+    of outcome). No portainer-mcp tool currently lists available
+    credential ids — the caller needs to know the id from the
+    Portainer UI (Settings > Git credentials) today.
 
 ## Self-signed certs
 
