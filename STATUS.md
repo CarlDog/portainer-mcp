@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-08-18
+**Last updated:** 2026-08-19
 
 ## Phase
 
@@ -410,6 +410,43 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   `docker-publish.yml`'s `paths-ignore`), so expect one more container
   bounce before the git-managed conversion, independent of that
   conversion itself.
+- **Own stack (129) converted to git-managed (2026-08-19), by hand
+  via the Portainer UI rather than `portainer_convert_stack_to_git`.**
+  That tool explicitly refuses to be safe for self-conversion (its own
+  description: "do not run this against the portainer-mcp stack itself
+  — the call dies mid-flight when portainer-mcp is killed") — it's
+  delete-then-create in one server-side call, and unlike a redeploy
+  (where Portainer completes the swap even if the response is lost),
+  a delete has nothing that auto-recreates the container if the create
+  step never runs. Scripting the same two calls from the local dev
+  machine was also rejected — it would have required pulling
+  portainer-mcp's own `PORTAINER_API_KEY` out to plaintext, which the
+  whole redaction architecture in this codebase exists to avoid.
+  Sequence used: delete stack 129 (file-based) → Portainer UI → Add
+  stack → **Repository** build method (not Web editor — pasting the
+  compose YAML there creates another file-based stack even if the YAML
+  is byte-identical, which is exactly what happened on the first
+  attempt and had to be redone) → new stack 179, `GitConfig.URL`
+  pointing at this repo, `ReferenceName: refs/heads/main`,
+  `ConfigFilePath: docker-compose.yml`. Hit one real bug along the way:
+  the re-entered `PORTAINER_URL` env var was set to the NAS's own LAN
+  hostname instead of `host.docker.internal` — a container can never
+  resolve the host's own hostname (`docker-deployments.md` rule 1),
+  surfaced as `getaddrinfo ENOTFOUND` from inside the container.
+  Fixed by re-pointing it at `host.docker.internal:9443` (the value
+  the compose's existing `extra_hosts: host.docker.internal:host-gateway`
+  entry supports). Verified after fix: `portainer_system_status`
+  reachable, container healthy, `org.opencontainers.image.revision`
+  matching the latest pushed commit, `NetworkMode: bridge` confirmed.
+  **New standing gap this introduces:** stack 179's `AutoUpdate.Interval`
+  is `"5m"` — Portainer polls the repo every 5 minutes and redeploys on
+  its own if the git ref or image changed, with no MCP call involved.
+  This is a live instance of the already-documented git-auto-update
+  coverage gap on the auto-prune feature (CLAUDE.md "Tool surface"):
+  every such auto-redeploy leaves a dangling image that only a manual
+  `portainer_prune_images` (or the next MCP-driven redeploy of *any*
+  stack on this endpoint, since prune targets the whole endpoint) will
+  clean up. Not fixed; flagging so it isn't mistaken for full coverage.
 
 ## Next
 
