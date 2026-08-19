@@ -484,11 +484,53 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   ROI: regression coverage for the env round-trip on both redeploy
   variants AND the convert tool — those are the paths most likely
   to silently corrupt state.
-- Smoke-test `portainer_convert_stack_to_git` against the live
-  NAS once the new image ships. Good target: any of the *-mcp
-  stacks. After convert, the new stack should be git-managed AND
-  retain its secrets without manual UI re-entry — the whole point
-  of this tool vs. the manual delete+create_git_stack flow.
+- ~~Smoke-test `portainer_convert_stack_to_git` against the live
+  NAS once the new image ships.~~ **Done 2026-08-19**, twice over: a
+  real (non-self) conversion of plex-companion first surfaced the
+  private-repo atomicity gap (see Done log — the incident that led to
+  `git_credential_id`), then a clean retry with `git_credential_id: 1`
+  succeeded fully — new stack, git-managed, secrets retained via the
+  env round-trip with zero manual UI re-entry, ground-truth verified
+  via container inspect. The tool's core promise is now live-proven.
+- **[2026-08-19 phase-end audit] HIGH — HTTP transport has zero
+  authentication.** `/mcp` in `src/index.ts` has no bearer-token or
+  host-allowlist check, and `docker-compose.yml` wires neither
+  `MCP_AUTH_TOKEN` nor `MCP_ALLOWED_HOSTS`. Already flagged once
+  before — OC dogfooding memory 2026-08-06 (`828456fc`) named this the
+  *highest-priority* gap in a fleet-wide auth-hardening audit:
+  portainer-mcp is the one server where this is a genuine code+compose
+  gap (not just an unset operator value, as with botify-mcp/servarr-mcp
+  in that same audit), and it exposes the most destructive tool surface
+  in the fleet (delete_stack, container_kill, convert_stack_to_git —
+  the last of which caused a real outage this same session). 13 days
+  later at audit time, still unaddressed, and three feature ships in
+  between (image prune, git_credential_id, compare_env_values) didn't
+  touch it. The README's "no auth, bind privately" note is honest but
+  isn't a fix — per docker-deployments.md #8, network binding alone
+  doesn't stop DNS rebinding from a browser on the host. **Recommended
+  fix:** port the MCP-F03 bearer-auth + host-allowlist pattern that
+  plex-companion and kindroid-mcp already implement. Queue as its own
+  stage — not an audit-pass quick fix.
+- **[2026-08-19 phase-end audit] MEDIUM — no idle-session eviction on
+  the HTTP transport.** The `transports` session map in `src/index.ts`
+  is only cleaned up via `transport.onclose` (client-initiated
+  teardown) — mcp-server-authoring.md flags this as unreliable for
+  long-lived per-session servers. No TTL sweep exists, unlike
+  plex-companion's `MCP_SESSION_IDLE_MS` pattern (same fleet, same
+  transport shape). Low practical urgency today — this container gets
+  redeployed often enough in practice (self-redeploys, AutoUpdate
+  polling) that the map likely never accumulates much — but worth
+  porting the sibling pattern over for correctness.
+- **[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is 2090
+  lines.** CLAUDE.md's own documented refactor trigger for pulling
+  tool registrations into `src/tools/<name>.ts` — "a tool that does
+  non-trivial composition of multiple API calls" — may have just been
+  crossed by `portainer_compare_env_values` (fetches two containers,
+  hashes, compares). Not urgent: the file stays cleanly organized
+  (pure functions, then the client class, then tool registrations),
+  nothing is actually broken. Worth revisiting whether the deferred
+  split is due now that a second orchestration-shaped tool exists
+  alongside `compareEnvValues`.
 - **Clean up `portainer_container_logs` output + add filtering.**
   Now a proven pain point (2026-06-03, see Known Gaps): demux the
   Docker 8-byte frame headers → newline-delimited text, and expose
