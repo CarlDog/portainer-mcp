@@ -597,6 +597,32 @@ None active. Decisions made during scaffolding:
   `./plugins` failed; 2 orphan containers remained). User cleanup
   via Portainer UI's container Remove. Future enhancement: emit
   the orphan cleanup as part of the convert error path.
+- **`portainer_convert_stack_to_git`'s delete-then-create atomicity
+  risk is not limited to self-conversion — confirmed live 2026-08-19
+  on plex-companion (stack 168, private repo, no credentials
+  passed).** The tool's own docstring only warns about converting
+  portainer-mcp's *own* stack (the process dies mid-call). It does
+  NOT warn that ANY stack pointing at a private repo, called without
+  `username`/`password`, hits the identical delete-succeeds/
+  create-fails hole — `authentication required: Repository not
+  found` from the create step, after the source stack (and its
+  running container) is already gone. Full outage, not just a
+  stack-record loss; `portainer_list_containers` confirmed the
+  container itself was removed too. Recovered via
+  `portainer_create_stack` using the tool's own recovery payload
+  (compose YAML verbatim + env key names) plus values reconstructed
+  from earlier session context — 3 of 24 env vars (real secrets)
+  were unrecoverable and left blank pending manual re-entry. Two
+  fixes worth doing, neither started: (1) the tool description should
+  warn generally — "will fail for any private-repo target called
+  without credentials, not just self-conversion" — rather than only
+  the self-conversion case; (2) the tool could pre-flight-check repo
+  reachability/auth *before* deleting the source stack, converting
+  this from an outage into a clean refusal (mirrors the existing
+  name-collision pre-flight on `create_stack`/`create_git_stack`).
+  See OC memory `ed84beab-5398-4142-a032-cdd27a60bd70` for full
+  incident detail including the still-open git-credential-ID
+  investigation this triggered.
 - ~~No regression test for the redactor yet committed.~~ Resolved
   2026-07-12: `test/redact.test.ts` (44 table-driven cases, `node
   --test` via `npm test`) covers key-name matching (incl. the new
