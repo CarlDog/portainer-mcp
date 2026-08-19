@@ -10,8 +10,8 @@ into this file, MEMORY.md, or Serena memories — reference STATUS.md.
 
 ## Current Sprint
 
-**Phase: scaffolding** — see [STATUS.md](STATUS.md) for the active
-phase, what's done, and what's next.
+See [STATUS.md](STATUS.md) for the active phase, what's done, and
+what's next.
 
 ## Stack
 
@@ -185,17 +185,34 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-23 tools registered in `src/portainer.ts` — 9 read tools (endpoints,
-stacks, containers, logs, volumes, system status) and 14 write tools
-(container start/stop/restart/kill/recreate; stack create/update/env/
-redeploy/git-convert/delete; git auth). The v1 "read-only initial
-scope" is history — see STATUS.md for the authoritative per-tool
-chronology and the README for the current tool table.
+25 tools registered in `src/portainer.ts` — 10 read tools (endpoints,
+stacks, containers, logs, volumes, images, system status) and 15 write
+tools (container start/stop/restart/kill/recreate; stack create/update/
+env/redeploy/git-convert/delete; git auth; image prune). The v1
+"read-only initial scope" is history — see STATUS.md for the
+authoritative per-tool chronology and the README for the current tool
+table.
 
 Write tools have real blast radius (`portainer_delete_stack` removes a
 stack and all its containers; `portainer_container_kill` is SIGKILL).
 Tool descriptions should make severity explicit so MCP clients can
 prompt for confirmation appropriately.
+
+**Auto-prune on redeploy/recreate.** `portainer_redeploy_stack`,
+`portainer_update_stack_file`, `portainer_redeploy_git_stack`, and
+`portainer_recreate_container` each call `pruneDanglingAfterRedeploy`
+(`PortainerClient`) once their main call succeeds, and merge the result
+onto the response as `imagePrune` via `withImagePrune`. This is the
+actual answer to "clean up orphaned images" — it targets the moment an
+image digest actually becomes orphaned (a redeploy swapping the tag to
+a new digest), not a time-based schedule. Always dangling-only (never
+`allUnused`); the aggressive mode stays an explicit, separately-
+confirmed call to `portainer_prune_images`. A prune failure is caught
+and reported in `imagePrune.error` rather than failing the redeploy
+that already succeeded — the redeploy is the thing that matters here.
+Known gap: a stack redeploy triggered by Portainer's own git-auto-update
+polling (no MCP call involved) doesn't go through these tools, so it
+isn't covered by this mechanism.
 
 ## Testing
 

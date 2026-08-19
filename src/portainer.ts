@@ -170,6 +170,37 @@ export function compactContainer(c: unknown): unknown {
   return out;
 }
 
+export interface ImagePruneOptions {
+  allUnused?: boolean;
+}
+
+// Builds the query for POST /images/prune. Docker's own filter semantics:
+// dangling=true (the default, and what we send when allUnused is falsy)
+// removes only untagged/dangling images — exactly the leftovers a
+// rebuild-and-repush leaves behind once a tag moves to a new digest.
+// dangling=false is the aggressive `-a` mode: it also removes tagged
+// images that aren't backing any container right now, which can delete
+// an image kept around for rollback. Default to the safe branch — never
+// infer the aggressive one from omission.
+export function imagePruneQuery(
+  opts: ImagePruneOptions,
+): Record<string, string> {
+  const dangling = opts.allUnused ? "false" : "true";
+  return { filters: JSON.stringify({ dangling: [dangling] }) };
+}
+
+// Merges an automatic post-redeploy image-prune result into a redeploy/
+// recreate response without clobbering it. Portainer's redeploy/recreate
+// endpoints return the updated Stack or Container object (a JSON object),
+// so the common case spreads cleanly; the fallback branch exists only in
+// case a response shape ever turns out not to be a plain object.
+export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), imagePrune };
+  }
+  return { result, imagePrune };
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -340,6 +371,50 @@ export class PortainerClient {
     );
   }
 
+  async listImages(endpointId: number): Promise<unknown> {
+    // Portainer-NATIVE handler (not the Docker proxy tree) — same shape
+    // as recreateContainer's /api/docker/{id}/... path. withUsage adds a
+    // `used` boolean per image (true if >=1 container references it),
+    // which is the whole point: it's what lets a caller tell "unused"
+    // apart from "backing something" without cross-referencing every
+    // container's Image/ImageID by hand.
+    return this.request("GET", `/api/docker/${endpointId}/images`, {
+      withUsage: "true",
+    });
+  }
+
+  async pruneImages(
+    endpointId: number,
+    opts: ImagePruneOptions = {},
+  ): Promise<unknown> {
+    return this.request(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/images/prune`,
+      imagePruneQuery(opts),
+    );
+  }
+
+  // Dangling-only prune run automatically after a redeploy/recreate that
+  // may have pulled a new image digest (docker-deployments.md rule 5:
+  // every push that changes the digest bounces the container and leaves
+  // the old digest dangling). Never allUnused here — that branch stays an
+  // explicit, separately-confirmed opt-in via portainer_prune_images. A
+  // prune failure must not fail the redeploy that already succeeded — log
+  // to stderr and surface the failure in the merged response instead of
+  // throwing.
+  private async pruneDanglingAfterRedeploy(
+    endpointId: number,
+  ): Promise<unknown> {
+    try {
+      return await this.pruneImages(endpointId, { allUnused: false });
+    } catch (err) {
+      console.error(
+        `portainer-mcp: post-redeploy image prune failed for endpoint ${endpointId}: ${String(err)}`,
+      );
+      return { error: String(err) };
+    }
+  }
+
   async containerStart(
     endpointId: number,
     containerId: string,
@@ -459,7 +534,7 @@ export class PortainerClient {
       undefined,
       { noRedact: true },
     );
-    return this.request(
+    const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}`,
       { endpointId: String(stack.EndpointId) },
@@ -470,6 +545,8 @@ export class PortainerClient {
         prune: opts.prune,
       },
     );
+    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
+    return withImagePrune(result, imagePrune);
   }
 
   async updateStackFile(
@@ -478,7 +555,7 @@ export class PortainerClient {
     opts: { pullImage: boolean; prune: boolean },
   ): Promise<unknown> {
     const stack = await this.assertFileBasedStack(stackId, "update");
-    return this.request(
+    const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}`,
       { endpointId: String(stack.EndpointId) },
@@ -489,6 +566,8 @@ export class PortainerClient {
         prune: opts.prune,
       },
     );
+    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
+    return withImagePrune(result, imagePrune);
   }
 
   async redeployGitStack(
@@ -551,12 +630,14 @@ export class PortainerClient {
         payload.repositoryAuthorizationType = auth.AuthorizationType;
       }
     }
-    return this.request(
+    const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}/git/redeploy`,
       { endpointId: String(stack.EndpointId) },
       payload,
     );
+    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
+    return withImagePrune(result, imagePrune);
   }
 
   async recreateContainer(
@@ -582,12 +663,14 @@ export class PortainerClient {
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/${containerRef}/json`,
     );
-    return this.request(
+    const result = await this.request(
       "POST",
       `/api/docker/${endpointId}/containers/${resolved.Id}/recreate`,
       undefined,
       { PullImage: opts.pullImage },
     );
+    const imagePrune = await this.pruneDanglingAfterRedeploy(endpointId);
+    return withImagePrune(result, imagePrune);
   }
 
   async createStack(
@@ -1202,6 +1285,46 @@ export function registerPortainerTools(
   );
 
   server.registerTool(
+    "portainer_list_images",
+    {
+      title: "Portainer: List Images",
+      description:
+        "List Docker images on an endpoint with usage info (`used: true` if at least one container references the image). Use this to see what portainer_prune_images would remove, or to spot old digests left behind by a rebuild-and-repush. Compact by design (id, tags, size, created, used) — no full/compact toggle needed.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+      },
+    },
+    async ({ endpoint_id }) => asText(await p.listImages(endpoint_id)),
+  );
+
+  server.registerTool(
+    "portainer_prune_images",
+    {
+      title: "Portainer: Prune Images",
+      description:
+        "Bulk-delete unused Docker images on an endpoint. Default removes only dangling/untagged images (Docker's own `docker image prune` default) — the leftovers once a rebuild-and-repush moves a tag to a new digest. Set all_unused=true to also remove tagged images not backing any container right now (like `docker image prune -a`) — reclaims more space but can delete an image kept around for rollback. Note: portainer_redeploy_stack, portainer_update_stack_file, portainer_redeploy_git_stack, and portainer_recreate_container already run the dangling-only version of this automatically after every call — reach for this tool for the all_unused case, or to clear backlog on an endpoint outside a redeploy.",
+      inputSchema: {
+        endpoint_id: z.number().int().describe("Endpoint ID"),
+        all_unused: z
+          .boolean()
+          .optional()
+          .describe(
+            "true = remove all unused images including tagged ones (docker image prune -a). false/omit = dangling/untagged only (safe default).",
+          ),
+        confirm: z
+          .literal(true)
+          .describe(
+            "Must be exactly true to acknowledge this bulk-deletes images",
+          ),
+      },
+    },
+    async ({ endpoint_id, all_unused }) =>
+      asText(
+        await p.pruneImages(endpoint_id, { allUnused: all_unused ?? false }),
+      ),
+  );
+
+  server.registerTool(
     "portainer_system_status",
     {
       title: "Portainer: System Status",
@@ -1332,7 +1455,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Stack",
       description:
-        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer.",
+        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call.",
       inputSchema: {
         stack_id: z.number().int().describe("Stack ID to redeploy"),
         pull_image: z
@@ -1366,7 +1489,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Update Stack File",
       description:
-        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer.",
+        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response.",
       inputSchema: {
         stack_id: z.number().int().describe("Stack ID to update"),
         compose_content: z
@@ -1406,7 +1529,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Git Stack",
       description:
-        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those).",
+        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up.",
       inputSchema: {
         stack_id: z.number().int().describe("Stack ID to redeploy"),
         pull_image: z
@@ -1440,7 +1563,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Recreate Container",
       description:
-        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON.",
+        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded.",
       inputSchema: {
         endpoint_id: z.number().int().describe("Endpoint ID"),
         container_id: z.string().describe("Container ID or name"),

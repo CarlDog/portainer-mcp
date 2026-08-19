@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-08-05
+**Last updated:** 2026-08-18
 
 ## Phase
 
@@ -322,6 +322,48 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   alert (#40) for its own reasons — no runtime impact either way,
   since it's dev-only. Verified: typecheck + build + lint + format +
   55/55 tests all clean; `npm audit` now reports 0 vulnerabilities.
+- **Image cleanup: `portainer_list_images` + `portainer_prune_images`,
+  and automatic dangling-image prune wired into every redeploy/recreate
+  tool (2026-08-18).** Motivated by 100+ unused/orphaned images
+  observed on the NAS from routine rebuild-and-repush churn
+  (docker-deployments.md rule 5: every push that changes a digest
+  bounces the container and leaves the superseded digest dangling).
+  Considered a time-based cron first; rejected in favor of hooking
+  cleanup to the actual moment images become orphaned — a redeploy
+  swapping a tag to a new digest — since that's precise and needs no
+  new scheduling infra.
+  - `portainer_list_images` — `GET /api/docker/{id}/images?withUsage=true`
+    (Portainer-native handler, not the Docker proxy tree). Returns
+    `{id, tags, size, created, used}` per image; `used` is what makes
+    "orphaned" answerable without cross-referencing every container.
+  - `portainer_prune_images` — `POST /api/endpoints/{id}/docker/images/prune`
+    (Docker proxy passthrough). Default `dangling`-only (Docker's own
+    `docker image prune` default); `all_unused: true` opts into the
+    aggressive `-a` mode (also removes tagged-but-unused images — can
+    delete a rollback candidate, so it's a separate explicit call, never
+    the default). `confirm: true` required either way.
+  - **Auto-prune:** `portainer_redeploy_stack`, `portainer_update_stack_file`,
+    `portainer_redeploy_git_stack`, and `portainer_recreate_container` now
+    run a dangling-only prune on the affected endpoint immediately after
+    a successful redeploy/recreate, merging the result onto the response
+    as `imagePrune` (`withImagePrune` in `src/portainer.ts`). A prune
+    failure is caught and reported in `imagePrune.error` rather than
+    failing the redeploy — the redeploy already succeeded and is the
+    thing that matters. Always dangling-only; `all_unused` stays a
+    manual, separately-confirmed `portainer_prune_images` call.
+  - **Known gap:** a redeploy triggered by Portainer's own git-auto-update
+    polling (no MCP call involved at all) isn't covered — nothing calls
+    our tools in that path. Most of this fleet's redeploys go through
+    these tools already, so the gap is believed small, but it means this
+    isn't 100% coverage of every possible redeploy source.
+  - Pure helpers `imagePruneQuery` + `withImagePrune`, table-driven tests
+    (9 new cases; 65/65 total). Typecheck/lint/format/build all clean.
+    Not yet smoke-tested against the live NAS deployment — do that before
+    or immediately after the next image publish + redeploy.
+  - Tool count: 23 → 25 (10 read, 15 write). `CLAUDE.md`'s stale
+    "Phase: scaffolding" line (long superseded by the deployed-and-
+    verified phase this file already describes) was also fixed while
+    touching that section.
 
 ## Next
 
@@ -364,7 +406,10 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
     lifecycle — different from per-container start/stop)
-  - `portainer_image_pull` / `_image_list` / `_image_inspect`
+  - ~~`portainer_image_pull` / `_image_list` / `_image_inspect`~~
+    `_image_list` shipped 2026-08-18 as `portainer_list_images`
+    (Portainer-native `withUsage` shape). `_image_pull` / `_image_inspect`
+    still not built — low priority, no concrete use case yet.
   - `portainer_endpoint_inspect` (cheap pre-flight guard for
     write tools)
   - `portainer_system_version` (richer than system_status when

@@ -511,9 +511,10 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_container_stop`    | `POST /api/endpoints/{id}/docker/containers/{id}/stop` (optional `?t=N`)  | Graceful SIGTERM → SIGKILL after timeout            |
 | `portainer_container_restart` | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`) | Same SIGTERM/wait/SIGKILL/start as stop+start      |
 | `portainer_container_kill`    | `POST /api/endpoints/{id}/docker/containers/{id}/kill` (optional `?signal=`) | Skips graceful shutdown; requires `confirm: true`  |
-| `portainer_recreate_container`| `POST /api/docker/{id}/containers/{id}/recreate` body `{PullImage}`       | **Native handler** (NOT under the proxy tree); `confirm: true` |
-| `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`    |
-| `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true` |
+| `portainer_recreate_container`| `POST /api/docker/{id}/containers/{id}/recreate` body `{PullImage}`       | **Native handler** (NOT under the proxy tree); `confirm: true`; auto-prunes dangling images after (see below) |
+| `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`; auto-prunes dangling images after (see below) |
+| `portainer_update_stack_file` | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack)                 | Same endpoint as `redeploy_stack` with caller-supplied compose content; `confirm: true`; auto-prunes dangling images after (see below) |
+| `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true`; auto-prunes dangling images after (see below) |
 | `portainer_create_stack`      | `POST /api/stacks/create/standalone/string?endpointId=N`                  | File-based standalone Compose. Pre-flight name-collision check; `confirm: true`   |
 | `portainer_create_git_stack`  | `POST /api/stacks/create/standalone/repository?endpointId=N`              | Git-managed standalone Compose. Optional auth (PAT visible in tool-call logs); `confirm: true` |
 | `portainer_convert_stack_to_git` | GET stack (noRedact) → GET file (noRedact) → DELETE stack → POST create-from-repository | Atomic file→git conversion preserving env server-side; two-factor confirm; recovery payload on failure |
@@ -522,7 +523,18 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
 | `portainer_list_volumes`      | `GET /api/endpoints/{id}/docker/volumes` (optional `?filters={"dangling":["true"]}`) | Read-only audit. Surface orphan volumes from deleted stacks |
 | `portainer_inspect_volume`    | `GET /api/endpoints/{id}/docker/volumes/{name}`                           | Mountpoint, Labels (Compose project label maps to stack name), CreatedAt |
+| `portainer_list_images`       | `GET /api/docker/{id}/images?withUsage=true`                              | **Native handler** (NOT under the proxy tree); `used` per image is what makes "orphaned" answerable |
+| `portainer_prune_images`      | `POST /api/endpoints/{id}/docker/images/prune?filters={"dangling":[...]}` | Docker proxy passthrough; `confirm: true`; dangling-only unless `all_unused: true` |
 | `portainer_system_status`     | `GET /api/system/status`                                                  | Public; `{Version, InstanceID}` only                |
+
+**Auto-prune after redeploy/recreate (2026-08-18).** The four
+redeploy/recreate tools above additionally call `POST
+/api/endpoints/{id}/docker/images/prune?filters={"dangling":["true"]}`
+once their main call succeeds — the same endpoint `portainer_prune_images`
+uses, always dangling-only. Result is merged onto the tool's response as
+`imagePrune`. A prune failure is caught and reported as `imagePrune.error`
+rather than failing the redeploy. See `PortainerClient.pruneDanglingAfterRedeploy`
+and `withImagePrune` in `src/portainer.ts`.
 
 All requests carry `X-API-Key: <key>` as an HTTP header
 (`PortainerClient.request`). Never put the key in the URL query
@@ -553,9 +565,16 @@ relying on the shape.
 
 ### Image operations
 
+~~List (Portainer)~~ and ~~Prune~~ shipped 2026-08-18 as
+`portainer_list_images` / `portainer_prune_images` — see "Endpoints
+currently used" above. One correction from the original candidate list:
+List (Portainer) is `GET /api/docker/{id}/images?withUsage=true` (no
+`/endpoints/{id}/docker/` prefix — it's a native handler, confirmed
+against `docs/specs/portainer.json`'s `dockerImagesList` operation),
+not the path guessed below when this table was first drafted.
+
 | Capability         | Endpoint                                                                                                     | Risk class             |
 |--------------------|--------------------------------------------------------------------------------------------------------------|------------------------|
-| List (Portainer)   | `GET /api/endpoints/{id}/docker/images?withUsage=true` (Portainer-specific shape, smaller than raw `/json`)  | Low                    |
 | List (raw)         | `GET /api/endpoints/{id}/docker/images/json` (full Docker inspect shape)                                     | Low                    |
 | Inspect            | `GET /api/endpoints/{id}/docker/images/{name}/json`                                                          | Low                    |
 | Pull               | `POST /api/endpoints/{id}/docker/images/create?fromImage=...` — streaming JSONL progress                     | Medium                 |

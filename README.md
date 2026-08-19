@@ -17,10 +17,17 @@ Sister to [`plex-mcp`](https://github.com/CarlDog/plex-mcp),
 
 ## Tools
 
-23 tools: 9 read tools plus 14 write tools with real side effects
+25 tools: 10 read tools plus 15 write tools with real side effects
 (container lifecycle, stack create/update/redeploy/delete). Secrets in
 Portainer/Docker responses are redacted client-side before reaching MCP
 callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
+
+The four redeploy/recreate tools (`portainer_redeploy_stack`,
+`portainer_update_stack_file`, `portainer_redeploy_git_stack`,
+`portainer_recreate_container`) automatically run a dangling-image prune
+on the affected endpoint right after they redeploy — the old digest a
+rebuild-and-repush leaves behind gets cleaned up as part of the deploy
+itself, no separate call or schedule needed.
 
 ### Read
 
@@ -34,6 +41,7 @@ callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
 | `portainer_container_logs` | Tail of container logs (1-5000 lines) |
 | `portainer_list_volumes` | List Docker volumes in an endpoint |
 | `portainer_inspect_volume` | Volume details by name |
+| `portainer_list_images` | List Docker images in an endpoint, with per-image usage info |
 | `portainer_system_status` | Portainer version + system info |
 
 ### Write (side effects — use deliberately)
@@ -44,16 +52,17 @@ callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
 | `portainer_container_stop` | Gracefully stop a container |
 | `portainer_container_restart` | Restart a container |
 | `portainer_container_kill` | SIGKILL a container (not graceful) |
-| `portainer_recreate_container` | Recreate a container (optionally re-pull image) |
+| `portainer_recreate_container` | Recreate a container (optionally re-pull image); auto-prunes dangling images after |
 | `portainer_create_stack` | Create a new compose stack from a file body |
 | `portainer_create_git_stack` | Create a git-managed stack from a repository |
-| `portainer_update_stack_file` | Replace a stack's compose file content |
+| `portainer_update_stack_file` | Replace a stack's compose file content; auto-prunes dangling images after |
 | `portainer_set_stack_env` | Set/update a stack's environment variables |
-| `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes) |
-| `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack |
+| `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes); auto-prunes dangling images after |
+| `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack; auto-prunes dangling images after |
 | `portainer_convert_stack_to_git` | Convert a file-based stack to git-managed |
 | `portainer_set_git_auth` | Update git credentials on a git-managed stack |
 | `portainer_delete_stack` | Delete a stack and all its containers |
+| `portainer_prune_images` | Bulk-delete unused images (dangling-only by default, or all-unused) |
 
 ## Configuration
 
