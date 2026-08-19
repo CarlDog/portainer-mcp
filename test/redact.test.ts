@@ -130,3 +130,33 @@ describe("redactSecrets — env-array shapes and casing", () => {
     });
   });
 });
+
+describe("redactSecrets — stack Webhook field", () => {
+  it("redacts a populated top-level Webhook UUID", () => {
+    const out = redactSecrets({
+      Id: 16,
+      Name: "overseerr",
+      Webhook: "ac6f149c-bbd3-43a5-8b6a-2f51288d72ce",
+    }) as { Webhook: string };
+    assert.equal(out.Webhook, REDACTED);
+  });
+
+  it("leaves an empty Webhook (not configured) untouched", () => {
+    const out = redactSecrets({ Name: "readarr", Webhook: "" }) as {
+      Webhook: string;
+    };
+    assert.equal(out.Webhook, "");
+  });
+
+  it("redacts Webhook case-insensitively and when nested", () => {
+    const out = redactSecrets({
+      AutoUpdate: { webhook: "05de31a2-79fa-4644-9c12-faa67e5c49f0" },
+    }) as { AutoUpdate: { webhook: string } };
+    assert.equal(out.AutoUpdate.webhook, REDACTED);
+  });
+
+  it("does not touch a non-string Webhook value", () => {
+    const out = redactSecrets({ Webhook: null }) as { Webhook: unknown };
+    assert.equal(out.Webhook, null);
+  });
+});

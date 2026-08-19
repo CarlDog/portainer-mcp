@@ -159,6 +159,19 @@ docker build -t portainer-mcp .
   surface. Use stack-level env vars + `${VAR}` references in compose
   to stay covered. See STATUS.md Known Gaps.
 
+  **Stack `Webhook` field (2026-08-19).** A stack's `Webhook` property
+  is a UUID that triggers an unauthenticated public redeploy
+  (`POST /stacks/webhooks/{id}` — see [PORTAINER-API.md](docs/PORTAINER-API.md)
+  "Webhooks are public"). It's a bearer token, not a display value, but
+  it's a top-level scalar field, not an `Env` array entry, so it sat
+  outside the redactor's scope until now — `portainer_list_stacks` and
+  `portainer_get_stack` were returning it in plaintext. `redactSecrets`
+  now special-cases any key named `webhook` (case-insensitive, at any
+  nesting depth) the same way it special-cases `env`: a non-empty
+  string value becomes `<redacted>`; an empty string (no webhook
+  configured) isn't secret and passes through unchanged, so callers can
+  still tell whether a stack has one enabled.
+
   **Comparing two redacted secrets — `portainer_compare_env_values`
   (2026-08-19).** Redaction is correct but creates its own gap: two
   services that are supposed to share a value (e.g. a shared bearer

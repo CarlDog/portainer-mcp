@@ -104,6 +104,12 @@ export function redactSecrets(value: unknown): unknown {
     for (const [k, v] of Object.entries(obj)) {
       if (k.toLowerCase() === "env" && Array.isArray(v)) {
         obj[k] = scrubEnvArray(v);
+      } else if (k.toLowerCase() === "webhook" && typeof v === "string" && v.length > 0) {
+        // A stack's Webhook is a UUID that triggers an unauthenticated
+        // public redeploy (POST /stacks/webhooks/{id}) — a bearer token,
+        // not a display value. Empty string (no webhook configured) isn't
+        // secret and passes through unchanged.
+        obj[k] = REDACTED;
       } else {
         obj[k] = redactSecrets(v);
       }

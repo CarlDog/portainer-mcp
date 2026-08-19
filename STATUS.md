@@ -598,6 +598,24 @@ None active. Decisions made during scaffolding:
   named-credential references or stored-secret pointers, NOT raw
   password parameters.
 
+- **Declined: exposing stack webhook trigger/management as MCP tools
+  (2026-08-19).** User asked whether Portainer's webhook-triggered
+  image updates could be adopted into portainer-mcp. Declined for two
+  reasons: (1) a stack's webhook UUID is functionally a bearer token —
+  `POST /stacks/webhooks/{id}` is public, no auth, and triggers a
+  redeploy on knowledge of the UUID alone, so any tool that surfaces
+  it puts a live unauthenticated-redeploy credential into the
+  conversation transcript and any session-history persistence, same
+  risk class as the credential-input principle above but on the
+  output side; (2) it's functionally redundant — `portainer_redeploy_stack`
+  / `portainer_redeploy_git_stack` already perform the identical
+  action over the authenticated API portainer-mcp already uses, so
+  there's no capability gain to justify the exposure. This mirrors
+  the existing non-goal already recorded in
+  [PORTAINER-API.md](docs/PORTAINER-API.md) ("Webhooks are public").
+  The investigation did surface a real, already-shipped gap — see
+  "Known Gaps" below (Stack `Webhook` field leaked in plaintext).
+
 ## Known Gaps
 
 - **Inline secrets in compose YAML are not redacted.**
@@ -748,3 +766,20 @@ None active. Decisions made during scaffolding:
     Cuts the payload ~50× even without a filter.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
+- ~~Stack `Webhook` field leaked in plaintext.~~ Resolved 2026-08-19:
+  found while researching a user request to add webhook-trigger tools
+  (see "Design Principles" above — that request was declined,
+  functionally redundant with the existing authenticated redeploy
+  tools and adds secret-exposure surface for no capability gain). The
+  investigation turned up a real, already-shipped gap: a stack's
+  `Webhook` UUID
+  (`POST /stacks/webhooks/{id}` — public, no auth, triggers a redeploy)
+  is a top-level scalar field, not an `Env` array entry, so it sat
+  outside `redactSecrets`'s scope. `portainer_list_stacks` and
+  `portainer_get_stack` were returning it verbatim — confirmed live
+  against the NAS (18 of 35 stacks currently have one provisioned).
+  Fixed by special-casing any `webhook`-named key (case-insensitive,
+  any nesting depth) the same way `env` is special-cased: non-empty
+  values become `<redacted>`, empty string (no webhook configured)
+  passes through since it isn't secret. Four new cases in
+  `test/redact.test.ts`. See CLAUDE.md "Conventions" for the detail.
