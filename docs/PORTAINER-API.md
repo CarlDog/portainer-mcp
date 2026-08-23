@@ -333,6 +333,28 @@ if (stack.GitConfig != null) {
 
 All the user's 36 stacks are file-based as of 2026-04-29.
 
+**A git-managed stack cannot get an env-only change — full stop
+(confirmed 2026-08-23, portainer-mcp#17).** The obvious-looking fix for
+this — route env-only changes for a git-managed stack through the
+file-based `PUT /api/stacks/{id}` endpoint the way `pull_image: false`
+already avoids the image pull — is **wrong and dangerous**: that
+endpoint unconditionally sets `stack.GitConfig = nil` (see above), so
+it would silently detach the stack from git. There's also no flag to
+ask around it: the pinned Swagger spec's own summary for
+`PUT /api/stacks/{id}/git/redeploy` is *"Pull and redeploy a stack via
+Git"*, and its payload schema (`stacks.stackGitRedployPayload`) has no
+field that skips the pull — `RepullImageAndRedeploy` only governs
+whether the *Docker image* gets re-pulled, not whether git does. So a
+git-managed stack's env can only ever change through an endpoint that
+always re-pulls from the remote first, meaning **any** env change on a
+git-managed stack requires live git connectivity, regardless of
+`pull_image`. If the stack's stored git credential is broken, the only
+recoveries are: fix the credential (`portainer_set_git_auth` or the
+Portainer UI) and retry, or make the change directly via the Portainer
+UI. `portainer_set_stack_env` wraps the underlying git error with this
+explanation rather than surfacing Portainer's raw low-level git message
+unexplained.
+
 ### `PullImage` is deprecated since 2.36
 
 The `PullImage: true` field on `PUT /api/stacks/{id}` and
@@ -518,7 +540,7 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_create_stack`      | `POST /api/stacks/create/standalone/string?endpointId=N`                  | File-based standalone Compose. Pre-flight name-collision check; `confirm: true`   |
 | `portainer_create_git_stack`  | `POST /api/stacks/create/standalone/repository?endpointId=N`              | Git-managed standalone Compose. Optional auth (PAT visible in tool-call logs); `confirm: true` |
 | `portainer_convert_stack_to_git` | GET stack (noRedact) → GET file (noRedact) → DELETE stack → POST create-from-repository | Atomic file→git conversion preserving env server-side; two-factor confirm; recovery payload on failure |
-| `portainer_set_stack_env`     | GET stack (noRedact) → apply set/remove → PUT (file-based) or PUT git/redeploy (git-managed) | Auto-detects file vs git; triggers redeploy (env change requires container restart); `pull_image` defaults to false |
+| `portainer_set_stack_env`     | GET stack (noRedact) → apply set/remove → PUT (file-based) or PUT git/redeploy (git-managed) | Auto-detects file vs git; triggers redeploy (env change requires container restart); `pull_image` defaults to false and, on a git-managed stack, does NOT make the call git-independent — see "Git stacks vs file stacks" below |
 | `portainer_set_git_auth`      | GET stack (noRedact) → POST /api/stacks/{id}/git with auth + env+autoUpdate round-trip | Adds, updates, or (with `remove: true`) wipes git auth on a git-managed stack. No redeploy — pair with `redeploy_git_stack` to exercise the new creds |
 | `portainer_delete_stack`      | `DELETE /api/stacks/{id}?endpointId=N` (after GET stack to derive endpoint) | Two-factor confirm (`confirm_name` + `confirm: true`); high blast radius          |
 | `portainer_list_volumes`      | `GET /api/endpoints/{id}/docker/volumes` (optional `?filters={"dangling":["true"]}`) | Read-only audit. Surface orphan volumes from deleted stacks |

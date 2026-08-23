@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-08-19
+**Last updated:** 2026-08-23
 
 ## Phase
 
@@ -471,6 +471,35 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   2026-08-05 KINDROID_MCP_TOKEN mismatch, and 2026-08-19's "does this
   new plex-companion token match kindroid-mcp's" question). Revisit
   drift detection separately if a real need for it shows up.
+
+- **`portainer_set_stack_env` on a git-managed stack: honest docs +
+  a real error instead of a raw git failure (2026-08-23, portainer-mcp#17).**
+  Filed from real dogfooding: an env-only removal on a git-managed
+  stack failed with `Unable get latest commit id... authentication
+  required` regardless of `pull_image`. The tool description implied
+  `pull_image: false` bought independence from git — it doesn't.
+  Investigated the obvious-looking fix (route env-only changes through
+  the file-based `PUT /api/stacks/{id}` endpoint) and found it's
+  **wrong and dangerous**: that endpoint unconditionally wipes
+  `stack.GitConfig` (see PORTAINER-API.md "Git stacks vs file stacks"),
+  so it would silently detach the stack from git. Confirmed via the
+  pinned Swagger spec that there's no flag to ask Portainer's
+  git-redeploy endpoint to skip the pull — `RepullImageAndRedeploy`
+  only governs the Docker image, not the git fetch, and the endpoint's
+  own summary is literally "Pull and redeploy a stack via Git." So the
+  real fix is smaller than the original issue proposed: the tool
+  description and `pull_image` param now say plainly that a
+  git-managed stack's env change *always* requires live git
+  connectivity, and `setStackEnv`'s git-redeploy call now wraps a
+  failure with that explanation plus the actual next step (fix the
+  stored git credential, or use the Portainer UI) instead of
+  surfacing Portainer's raw low-level git error unexplained. No
+  routing change — this constraint is real, not a portainer-mcp bug.
+  typecheck/lint/test/build all clean (77/77 tests; no new tests added
+  — this is error-message wrapping around a live API call, not a pure
+  function, and the codebase's own convention is real-instance
+  integration tests over mocking, which a deliberately-broken-git-
+  credential fixture isn't worth building for this).
 
 ## Next
 

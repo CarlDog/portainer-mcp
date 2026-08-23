@@ -1173,12 +1173,37 @@ export class PortainerClient {
           payload.repositoryAuthorizationType = auth.AuthorizationType;
         }
       }
-      return this.request(
-        "PUT",
-        `/api/stacks/${stackId}/git/redeploy`,
-        { endpointId: String(stack.EndpointId) },
-        payload,
-      );
+      // git/redeploy always re-pulls from the remote first, regardless of
+      // pullImage/RepullImageAndRedeploy -- confirmed against the pinned
+      // Swagger spec (docs/specs/portainer.json: "Pull and redeploy a
+      // stack via Git", no flag in stackGitRedployPayload to skip the
+      // pull) and this repo's own docs/PORTAINER-API.md. So there is no
+      // way to change env on a git-managed stack without live git
+      // connectivity, full stop -- and the raw error on a broken git
+      // credential is an opaque low-level git message that doesn't say
+      // so. Wrap it (see PORTAINER-API.md "portainer_set_stack_env" for
+      // the fuller writeup) rather than let the caller assume portainer-
+      // mcp itself is broken.
+      try {
+        return await this.request(
+          "PUT",
+          `/api/stacks/${stackId}/git/redeploy`,
+          { endpointId: String(stack.EndpointId) },
+          payload,
+        );
+      } catch (err) {
+        throw new Error(
+          `Env change on git-managed stack ${stackId} (${stack.Name}) failed. ` +
+            `Env changes on a git-managed stack always route through Portainer's ` +
+            `git-redeploy endpoint, which re-pulls from the remote first regardless ` +
+            `of pull_image -- there is no way to change env here without live git ` +
+            `connectivity. If this is a git auth/connectivity error, fix the stack's ` +
+            `stored git credential (Portainer UI > Stacks > ${stack.Name} > git ` +
+            `settings) and retry, or make the change directly via the Portainer UI. ` +
+            `Underlying error: ${err instanceof Error ? err.message : String(err)}`,
+          { cause: err },
+        );
+      }
     }
     // File-based path: need to also round-trip the compose content.
     const file = await this.request<{ StackFileContent: string }>(
@@ -2030,7 +2055,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Set / Remove Stack Env Variables",
       description:
-        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart, but does NOT pull a new image by default (env-only intent — set pull_image=true to also pull). At least one of `set` or `remove` is required. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
+        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
       inputSchema: {
         stack_id: z.number().int().describe("Stack ID"),
         set: z
@@ -2054,7 +2079,7 @@ export function registerPortainerTools(
           .boolean()
           .optional()
           .describe(
-            "Pull the latest image as part of the redeploy (default false — env-only intent). Set true if you want to combine an env change with an image refresh.",
+            "Pull the latest image as part of the redeploy (default false). Controls the Docker image pull only — on a git-managed stack this does NOT skip the git fetch: Portainer's git-redeploy endpoint always re-pulls from the remote regardless of this flag, so it still requires live git connectivity either way.",
           ),
         confirm: z
           .literal(true)
