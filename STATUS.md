@@ -825,6 +825,30 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   found and the script rewritten to inspect the actual result object.
   express/undici/typescript remain pinned; PR #11 still tracks those
   three and stays open.
+- **Dependabot PR #10 merged, and the label-config gap fixed
+  (2026-08-28).** #10 (GitHub Actions major bump — `actions/checkout`
+  6→7, `gitleaks/gitleaks-action` 2→3) checked out low-risk on
+  inspection, unlike #11: a 4-line diff touching only
+  `.github/workflows/gitleaks.yml`, no application code. `actions/checkout`
+  v7's one breaking change ("block checking out fork PR for
+  `pull_request_target`/`workflow_run`") doesn't apply — this repo's
+  workflows only use plain `push`/`pull_request` triggers (confirmed
+  by reading `gitleaks.yml` directly, not just trusting the PR
+  description). `gitleaks-action` v3 is a documented "no changes to
+  inputs, outputs, or behavior" Node 20→24 runtime migration, and
+  genuinely time-sensitive: GitHub removes the Node 20 Actions runtime
+  entirely on 2026-09-16. All of the PR's own CI checks (Test ×3 OS,
+  lint+format, build-and-push, the gitleaks scan itself) were already
+  green. Squash-merged; confirmed both the gitleaks workflow and the
+  full test matrix ran clean against the new action versions on `main`
+  afterward. Separately, created the four labels
+  (`dependencies`/`npm`/`ci`/`docker`) `.github/dependabot.yml` has
+  always referenced but that never existed in the repo — every
+  Dependabot PR had silently failed to label itself since the config
+  was written. Since Dependabot only applies labels at PR-creation
+  time, retroactively applied `dependencies`+`npm` to the still-open
+  PR #11 by hand; new PRs will label themselves correctly going
+  forward.
 
 ## Next
 
@@ -938,21 +962,26 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     user's sign-off before touching public-facing repo settings, not
     something to change unprompted.
   - ~~Two Dependabot PRs open 25 days with no recorded decision~~
-    **zod resolved 2026-08-28** — bumped 3→4 via a scoped manual bump
-    (see Done below), NOT by merging PR #11, since that PR bundles zod
-    with three unrelated majors (express 5, undici 8, typescript 7)
-    carrying real, unverified risk for this repo's Express-based
-    transport and version-sensitive `undici` usage. PR #11 itself is
-    still open and still tracks those three — merging it now would
-    still pull in all three at once; each needs its own migration
-    session or an explicit decision to keep deferring, per this
-    entry's original framing. #10 (GitHub Actions major bump, likely
-    low-risk) is unchanged, still open, still a user decision. Also
-    still open: Dependabot's configured labels
-    (`dependencies`/`npm`/`ci`/`docker`) don't exist in the repo, so
-    every PR has silently failed to label itself since the config was
-    written — cheap fix (`gh label create ...`) whenever someone's
-    doing repo-settings cleanup anyway.
+    **Both resolved 2026-08-28** (see Done below): zod bumped 3→4 via
+    a scoped manual bump, NOT by merging PR #11 wholesale — that PR
+    bundles zod with three unrelated majors (express 5, undici 8,
+    typescript 7) carrying real, unverified risk for this repo's
+    Express-based transport and version-sensitive `undici` usage. PR
+    #11 stays open tracking those three; each needs its own migration
+    session or an explicit decision to keep deferring. #10 (GitHub
+    Actions major bump — `actions/checkout` 6→7, `gitleaks-action`
+    2→3) was genuinely low-risk on inspection (workflow-only diff, the
+    checkout v7 breaking change only affects `pull_request_target`/
+    `workflow_run` triggers which this repo doesn't use, gitleaks-action
+    v3 is a documented no-behavior-change Node runtime migration ahead
+    of GitHub's Sept 16 2026 Node 20 removal) and was merged — CI
+    confirmed green on `main` afterward.
+  - ~~Dependabot's configured labels don't exist in the repo~~
+    **Resolved 2026-08-28.** Created `dependencies`/`npm`/`ci`/`docker`
+    (`gh label create`) and retroactively applied `dependencies`+`npm`
+    to the still-open PR #11, since Dependabot only sets labels at
+    PR-creation time — existing open PRs don't pick up newly-created
+    labels on their own.
 
 ## Open Decisions
 
