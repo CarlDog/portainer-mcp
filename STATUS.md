@@ -789,6 +789,42 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     changes (topics/description), and the two stale open Dependabot
     PRs (#10, #11) — all need either more scope than a quick audit-pass
     fix or a judgment call belonging to the user, not silently applied.
+    (zod, one part of #11, was resolved same-day — see next entry.)
+- **zod 3→4 (2026-08-28), via a scoped manual bump, not merging PR
+  #11.** The user asked to "merge PR #11's zod bump" — checking the
+  actual PR first showed it's a Dependabot group bundling 6 updates
+  into one atomic merge (express 4→5, @types/express, undici 6→8, zod
+  3→4, @types/node, typescript 5.9→7). Merging it as-is would have
+  pulled in express 5 and undici 8 unasked-for, both real risk for
+  this repo specifically (the HTTP transport is built directly on
+  Express; `undici`'s dispatcher/Agent handling for self-signed certs
+  is exactly the kind of version-sensitive code docker-deployments.md
+  already documents one real incident about). Confirmed the narrower
+  scope with the user before touching anything, then did a standalone
+  `zod` bump instead: `package.json` → `^4.5.1`, `npx -y npm@10.9.8
+  install`. Before assuming safety, checked `@modelcontextprotocol/sdk`'s
+  actual JSON-schema-conversion code — it ships a dedicated
+  `zod-json-schema-compat.js` that runtime-detects the schema's zod
+  version and branches accordingly (v3 → vendored `zod-to-json-schema`,
+  v4 → zod's own native `toJSONSchema`), which is exactly why the SDK's
+  peer range has allowed `^3.25 || ^4.0` since ≥1.28.0 (the "zod 4
+  blocked on SDK" claim closing PR #9 was never true by that point —
+  see the phase-end-audit entry above). typecheck/lint/test/build all
+  clean, but the real verification was two throwaway MCP client/server
+  round-trip scripts (not committed — pure one-off checks): one
+  confirmed all 31 tools' advertised JSON schemas are byte-equivalent
+  under zod 4 (`additionalProperties: false` at every level including
+  nested env-array items, `required`, enums, min/max all unchanged);
+  the other called real tools end-to-end and confirmed runtime
+  validation still rejects an unrecognized key
+  (`"Unrecognized key: ..."`) and a missing `confirm: true`
+  (`"expected true at confirm"`) with the same error shape as before —
+  the first version of that script wrongly assumed rejections throw
+  a JS exception rather than returning an MCP `isError: true` result,
+  which produced three false "PROBLEM" lines before the bug was
+  found and the script rewritten to inspect the actual result object.
+  express/undici/typescript remain pinned; PR #11 still tracks those
+  three and stays open.
 
 ## Next
 
@@ -901,13 +937,18 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     narrower/stale subset of README's actual lead line) — needs the
     user's sign-off before touching public-facing repo settings, not
     something to change unprompted.
-  - **Two Dependabot PRs open 25 days with no recorded decision**:
-    #11 (npm major-bump group — express 5/undici 8/zod 4/typescript 7;
-    note the zod-4-blocked reasoning that closed its predecessor PR #9
-    no longer holds, see Done above) and #10 (GitHub Actions major
-    bump, likely low-risk). Both are real compatibility/version
-    judgment calls for the user, not something to merge or close
-    silently. Also: Dependabot's configured labels
+  - ~~Two Dependabot PRs open 25 days with no recorded decision~~
+    **zod resolved 2026-08-28** — bumped 3→4 via a scoped manual bump
+    (see Done below), NOT by merging PR #11, since that PR bundles zod
+    with three unrelated majors (express 5, undici 8, typescript 7)
+    carrying real, unverified risk for this repo's Express-based
+    transport and version-sensitive `undici` usage. PR #11 itself is
+    still open and still tracks those three — merging it now would
+    still pull in all three at once; each needs its own migration
+    session or an explicit decision to keep deferring, per this
+    entry's original framing. #10 (GitHub Actions major bump, likely
+    low-risk) is unchanged, still open, still a user decision. Also
+    still open: Dependabot's configured labels
     (`dependencies`/`npm`/`ci`/`docker`) don't exist in the repo, so
     every PR has silently failed to label itself since the config was
     written — cheap fix (`gh label create ...`) whenever someone's

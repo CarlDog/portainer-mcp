@@ -13,6 +13,34 @@ rather than after the fact.
 
 ## [Unreleased]
 
+## [0.8.1] - 2026-08-28
+
+### Changed
+
+- Bumped `zod` 3.25.76 → 4.5.1. Dependabot PR #11 had bundled this with
+  three unrelated majors (express 5, undici 8, typescript 7) that carry
+  real, unverified breaking-change risk for this repo's Express-based
+  HTTP transport and version-sensitive `undici` dispatcher usage — done
+  as a scoped manual bump instead of merging that PR wholesale. The
+  "zod 4 blocked on the MCP SDK" reasoning that closed the predecessor
+  PR (#9) no longer holds: `@modelcontextprotocol/sdk` (installed:
+  1.30.0) has declared `"zod": "^3.25 || ^4.0"` since ≥1.28.0, and ships
+  a dedicated runtime-detecting compat shim
+  (`zod-json-schema-compat.js`) that routes v3 schemas through the
+  vendored `zod-to-json-schema` converter and v4 schemas through zod's
+  own native `toJSONSchema`. Verified via a real MCP client/server
+  round-trip, not just `tsc`: all 31 tools' advertised JSON schemas are
+  unchanged (`additionalProperties: false` at every level including
+  nested env-array items, `required` arrays, enums, min/max), and
+  runtime request validation still rejects an unrecognized key and a
+  missing `confirm: true` with the same clear error shape. No source
+  changes needed — this codebase's zod usage (`z.object`, `.strict()`,
+  `z.string()`, `z.number().int()`, `z.literal()`, `z.enum()`,
+  `z.array()`, `.optional()`, `.describe()`, `.min()`/`.max()`) sits
+  entirely within the unchanged-behavior subset of the v3→v4 migration.
+  express/undici/typescript remain on their current majors — see
+  STATUS.md "Next" for that decision.
+
 ## [0.8.0] - 2026-08-28
 
 Same-day follow-up to 0.7.0: closes the remaining known gaps left open by

@@ -1,6 +1,6 @@
 {
   "name": "@carldog/portainer-mcp",
-  "version": "0.8.0",
+  "version": "0.8.1",
   "private": true,
   "license": "MIT",
   "description": "MCP server for Portainer (stacks, containers, endpoints), packaged as a Docker container",
@@ -25,7 +25,7 @@
     "@modelcontextprotocol/sdk": "^1.30.0",
     "express": "^4.21.0",
     "undici": "^6.0.0",
-    "zod": "^3.23.8"
+    "zod": "^4.5.1"
   },
   "devDependencies": {
     "@eslint/js": "^10.0.1",
