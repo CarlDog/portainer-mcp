@@ -212,6 +212,41 @@ export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
   return { result, imagePrune };
 }
 
+function escapeRegExp(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+// Advisory check for portainer_set_stack_env: does the compose file
+// actually reference a given env key anywhere, as ${KEY} / ${KEY:-def} /
+// ${KEY:?msg} or a bare $KEY? A key that's set but never referenced is a
+// silent no-op -- Portainer stores the value, but nothing in the compose
+// file ever reads it. False negatives are the safe failure mode here (at
+// worst, no warning for a reference style this regex doesn't recognize);
+// false positives are not, so this stays permissive rather than trying
+// to fully parse compose interpolation syntax.
+export function findUnreferencedEnvKeys(
+  composeContent: string,
+  keys: string[],
+): string[] {
+  return keys.filter((key) => {
+    const esc = escapeRegExp(key);
+    const pattern = new RegExp(
+      `\\$\\{${esc}(?:[:?][^}]*)?\\}|\\$${esc}(?![A-Za-z0-9_])`,
+    );
+    return !pattern.test(composeContent);
+  });
+}
+
+// Merges advisory env-reference warnings onto a set_stack_env response
+// without clobbering it -- same pattern as withImagePrune.
+export function withEnvWarnings(result: unknown, warnings: string[]): unknown {
+  if (warnings.length === 0) return result;
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), envWarnings: warnings };
+  }
+  return { result, envWarnings: warnings };
+}
+
 export interface EnvSideRaw {
   found: boolean;
   value: string;
@@ -1179,6 +1214,18 @@ export class PortainerClient {
         newEnv.push(entry);
       }
     }
+    const setKeys = (changes.set ?? []).map((e) => e.name);
+    // Builds the "set but not referenced anywhere in the compose file"
+    // advisory from a fetched compose string. Never throws -- called from
+    // inside a try/catch on the git-managed path, and the file-based path
+    // already has a guaranteed-successful fetch to reuse.
+    const unreferencedWarnings = (composeContent: string): string[] =>
+      findUnreferencedEnvKeys(composeContent, setKeys).map(
+        (key) =>
+          `"${key}" was set but is not referenced anywhere in the compose file ` +
+          `(no \${${key}} or $${key}) -- the value will have no effect until the ` +
+          `compose file references it.`,
+      );
     // Detect file-based vs git-managed and route to the matching update
     // endpoint. Both trigger a synchronous redeploy because Portainer
     // can't change container env without restart, but neither pulls a
@@ -1215,12 +1262,30 @@ export class PortainerClient {
       // the fuller writeup) rather than let the caller assume portainer-
       // mcp itself is broken.
       try {
-        return await this.request(
+        const result = await this.request(
           "PUT",
           `/api/stacks/${stackId}/git/redeploy`,
           { endpointId: String(stack.EndpointId) },
           payload,
         );
+        // Advisory-only: this fetch exists solely to check whether the
+        // `set` keys are referenced anywhere in the compose file, so a
+        // failure here must never fail (or even affect) the env change
+        // that already succeeded above.
+        let warnings: string[] = [];
+        if (setKeys.length > 0) {
+          try {
+            const file = await this.request<{ StackFileContent: string }>(
+              "GET",
+              `/api/stacks/${stackId}/file`,
+            );
+            warnings = unreferencedWarnings(file.StackFileContent);
+          } catch {
+            // Skip the warning if the file fetch fails; the env change
+            // itself already succeeded and is what matters.
+          }
+        }
+        return withEnvWarnings(result, warnings);
       } catch (err) {
         throw new Error(
           `Env change on git-managed stack ${stackId} (${stack.Name}) failed. ` +
@@ -1243,7 +1308,7 @@ export class PortainerClient {
       undefined,
       { noRedact: true },
     );
-    return this.request(
+    const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}`,
       { endpointId: String(stack.EndpointId) },
@@ -1254,6 +1319,7 @@ export class PortainerClient {
         prune: false,
       },
     );
+    return withEnvWarnings(result, unreferencedWarnings(file.StackFileContent));
   }
 
   async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
@@ -2156,7 +2222,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Set / Remove Stack Env Variables",
       description:
-        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
+        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. If a `set` key isn't referenced anywhere in the compose file (no `${KEY}` or `$KEY`), the response includes an `envWarnings` array flagging it — Portainer will store the value, but nothing will read it until the compose file references it. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID"),
