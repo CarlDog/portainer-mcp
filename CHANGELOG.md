@@ -13,6 +13,52 @@ rather than after the fact.
 
 ## [Unreleased]
 
+## [0.8.0] - 2026-08-28
+
+Same-day follow-up to 0.7.0: closes the remaining known gaps left open by
+that pass, then a phase-end-audit-triggered internal refactor. Tool count
+30 → 31.
+
+### Added
+
+- `portainer_pull_image` — pull an image on an endpoint without touching any
+  container. Splits the slow part of `portainer_recreate_container`'s
+  pull-then-recreate off from the fast, destructive part, so a large image
+  no longer risks the MCP client's own tool-call timeout landing mid-recreate.
+  Public/anonymous registries only for now.
+- `since` / `until` params on `portainer_container_logs`, accepting a Unix
+  timestamp, an RFC3339 datetime, or a relative duration (`"10m"`, `"1h30m"`)
+  — mirrors `docker logs --since`'s own convention.
+- `containerChanges` field on `portainer_redeploy_stack`,
+  `portainer_update_stack_file`, `portainer_redeploy_git_stack`, and
+  `portainer_set_stack_env` — a before/after diff of the stack's containers
+  by name (`recreated`/`unchanged`/`added`/`removed`), so a 200 response
+  distinguishes "Portainer accepted the call" from "something actually
+  changed."
+- `pruneWarning` field on `portainer_redeploy_stack`, `portainer_update_stack_file`,
+  and `portainer_redeploy_git_stack` — fires when `prune: true` is requested
+  against a Compose-type stack, where Portainer's `Prune` option silently has
+  no effect (it's Swarm-only per Portainer's own API).
+- `SECURITY.md` — vulnerability disclosure policy.
+
+### Changed
+
+- Internal: all 31 MCP tool registrations moved from a single
+  `src/portainer.ts` into `src/tools/{stacks,containers,images,networks,volumes,system}.ts`,
+  one file per Portainer resource. `src/portainer.ts` now holds only
+  `PortainerClient`, the shared pure helper functions, and a thin
+  orchestrator. No user-facing behavior change. See CLAUDE.md's "Tool
+  registration layout."
+- Internal: deduplicated the response-merge helpers (`withImagePrune`,
+  `withContainerChanges`, `withEnvWarnings`, `withPruneWarning`) onto a
+  single shared `mergeField` implementation; deduplicated the stack-name
+  pre-flight collision check shared by `createStack`/`createGitStack`; and
+  the git-redeploy payload construction shared by `redeployGitStack`/
+  `setStackEnv`'s git-managed branch. No behavior change — closes several
+  self-acknowledged duplication spots found during a phase-end audit, each
+  guarding a real correctness/security rule (Portainer's silent same-name
+  Swarm-stack deletion, and the git-config-wipe trap on stack updates).
+
 ## [0.7.0] - 2026-08-28
 
 Dogfooding backlog: closes 7 accumulated `mcp-feedback` OpenChronicle

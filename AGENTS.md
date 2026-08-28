@@ -305,7 +305,8 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-31 tools registered in `src/portainer.ts` — 13 read tools (endpoints,
+31 tools registered across `src/tools/{stacks,containers,images,networks,volumes,system}.ts`
+(see "Tool registration layout" above) — 13 read tools (endpoints,
 stacks, containers, logs, volumes, networks, images, system status,
 env-value comparison) and 18 write tools (container start/stop/restart/
 kill/delete/recreate; image pull; stack create/update/env/redeploy/git-convert/

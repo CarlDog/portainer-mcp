@@ -1,13 +1,20 @@
 # Status
 
-**Last updated:** 2026-08-28 — **v0.7.0**, closing 7 accumulated
-`mcp-feedback` OpenChronicle memories (the dogfooding backlog) in one pass.
-Tool count 26 → 30: `portainer_container_delete`, `portainer_list_networks`,
+**Last updated:** 2026-08-28 — **v0.8.0**, a same-day follow-up to v0.7.0
+below. Closes the remaining known gaps from that pass (container_logs
+since/until, containerChanges diff, the remove_orphans investigation ->
+pruneWarning, recreate_container's timeout risk -> portainer_pull_image),
+then a phase-end audit that split `src/portainer.ts` into `src/tools/*.ts`
+and deduplicated several internals. Tool count 30 → 31.
+
+**v0.7.0** closed 7 accumulated `mcp-feedback` OpenChronicle memories (the
+dogfooding backlog) in one pass. Tool count 26 → 30:
+`portainer_container_delete`, `portainer_list_networks`,
 `portainer_inspect_network`, `portainer_prune_networks` are new; every
 existing tool got at least a schema/description touch (`.strict()` on all
 30, compact-by-default on three list/get tools, `get_stack` finally returns
 `StackFileContent`, `container_logs` returns clean demuxed text). See Done
-below for the full breakdown.
+below for the full breakdown of both releases.
 
 Previously: **v0.6.0**, this repo's first tagged release, under the new
 fleet standard UNI-19. Three things landed with it: the backfilled
@@ -108,7 +115,7 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   endpoints we haven't built yet (with risk class), and explicit
   out-of-scope. Pinned spec snapshot at
   [`docs/specs/portainer.json`](docs/specs/portainer.json) (Swagger
-  2.0, 441 KB, 185 paths). Follows the
+  2.0, ~690 KB, 185 paths). Follows the
   plex-mcp / servarr-mcp convention. Three things the research
   surfaced that change earlier assumptions:
   - Stack deploys are **synchronous** in 2.39.1 (the older
@@ -724,6 +731,64 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   2026-08-18 as `portainer_container_delete`, still listed as
   not-built) and this same Pull row. 8 new table-driven test cases
   (151 → 159 total).
+- **`src/portainer.ts` split into `src/tools/*.ts`, one file per
+  Portainer resource (2026-08-28).** Closes the file-size item queued
+  in "Next" below with proper planning rather than a silent split:
+  proposed a 6-file grouping (stacks/containers/images/networks/
+  volumes/system) to the user, got explicit go-ahead, then executed
+  as 6 mechanical commits, each verified with typecheck/lint/format/
+  test/build plus a real MCP client/server `tools/list` round-trip.
+  `src/portainer.ts` down from ~3030 to 1877 lines (pure helpers +
+  `PortainerClient` + a thin `registerPortainerTools` orchestrator);
+  all 31 tool registrations now live in
+  `src/tools/{stacks,containers,images,networks,volumes,system}.ts`.
+  See CLAUDE.md "Tool registration layout" for the breakdown.
+- **Phase-end audit (2026-08-28), run after the above.** 9 parallel
+  survey agents (docs currency, code-quality baseline, duplication/
+  dead-code, type-narrowness/API boundaries, test coverage, security/
+  config drift, dependencies/license, community standards, OC/auto-memory
+  currency) against a workflow, ~30 findings triaged and the
+  High/Medium ones fixed in this same pass:
+  - CHANGELOG.md backfilled with the [0.8.0] entry (was missing 5
+    shipped features + the refactor — see CHANGELOG.md).
+  - CLAUDE.md/AGENTS.md's stale "Tool surface" line (still said tools
+    live in `src/portainer.ts`, contradicting their own updated
+    Layout section) corrected.
+  - Three self-acknowledged/correctness-risk duplication spots in
+    `src/portainer.ts` deduplicated: the four `with*` response-merge
+    helpers onto a shared `mergeField`; the stack-name pre-flight
+    collision check shared by `createStack`/`createGitStack`; the
+    git-redeploy payload construction shared by `redeployGitStack`/
+    `setStackEnv`'s git branch. `RawAuth`/`RawGitConfig`/`RawEnvEntry`
+    (previously redeclared 2-3x each, one carrying the dual-casing
+    correctness rule) hoisted to module-level.
+  - 9 exported interfaces with zero external consumers un-exported;
+    `getContainerEnvValueRaw` now reuses `EnvSideRaw` instead of
+    redeclaring it inline; 3 nested env-array item schemas in
+    `src/tools/stacks.ts` gained the `.strict()` this codebase applies
+    everywhere else; a backwards test name in `test/images.test.ts`
+    fixed to match what it actually asserts.
+  - `SECURITY.md` added — flagged as the one community-standards gap
+    NOT covered by the solo-maintainer carve-out (public repo, 18
+    write tools with real blast radius).
+  - Full-history `gitleaks detect` (108 commits) run for the first
+    time — **no leaks found**. Recording the result here so the next
+    audit has a watermark; this closes phase-end-audit.md's quarterly
+    cadence item, never previously run despite the repo being 4
+    months old.
+  - Fleet-wide auto-memory correction: `project_fleet_dependency_posture.md`'s
+    "zod 4 blocked on MCP SDK" claim was stale (the SDK has allowed
+    zod 4 since ≥1.28.0) — corrected, since it was feeding false
+    context into future sessions across the whole fleet, not just
+    this repo.
+  - Deferred, not built this pass (see "Next" below): a committed
+    tool-registration smoke test, extracting/testing
+    `parseAllowedHosts`, extracting/testing `set_git_auth`'s
+    validation logic, two low-value dedup spots (compact-projection
+    branch, volume/network filter-building), GitHub-side metadata
+    changes (topics/description), and the two stale open Dependabot
+    PRs (#10, #11) — all need either more scope than a quick audit-pass
+    fix or a judgment call belonging to the user, not silently applied.
 
 ## Next
 
@@ -797,6 +862,56 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     write tools)
   - `portainer_system_version` (richer than system_status when
     authenticated)
+- **[2026-08-28 phase-end audit] Deferred items, queued rather than
+  built in the audit pass itself:**
+  - **A committed tool-registration smoke test.** The 6-file
+    `src/tools/*.ts` split (see Done above) has zero automated
+    coverage of the registration/wiring layer itself — only a
+    manual, uncommitted `tools/list` round-trip verified it at split
+    time. typecheck/build can't catch a dropped `registerTool(...)`
+    block, a duplicate tool name, or `.strict()` failing to reach the
+    *advertised* JSON schema (that's a runtime SDK conversion, not a
+    TS type). Proposed shape: construct a real `McpServer` +
+    `PortainerClient` (no network I/O at construction), call
+    `registerPortainerTools`, assert the exact tool-name list plus
+    `additionalProperties: false` on every schema — mirroring
+    `test/http-transport.test.ts`'s precedent of a real in-process
+    server with zero mocking. Do NOT import `src/index.ts` for this —
+    it has top-level side effects (env var reads, `process.exit(1)`
+    on missing config) and isn't safe to import from a test.
+  - **Extract `parseAllowedHosts` (`src/index.ts`) into a testable
+    module.** Real security-relevant logic (throws on a config typo
+    that would otherwise silently disable the Host allowlist) with
+    zero test coverage today, and it can't be tested in place since
+    `src/index.ts` runs side-effecting code on import. Move to e.g.
+    `src/shared/allowed-hosts.ts`, export it, add a table-driven test.
+  - **Extract `portainer_set_git_auth`'s inline XOR validation**
+    (`remove: true` must not also carry `username`/`password`) into a
+    pure, tested function. It's the one handler in the entire
+    `tools/` layer with real branching logic instead of a thin
+    arg-map + client-call wrapper — every other piece of business
+    logic in this codebase already lives in a tested pure helper.
+  - **Two low-value dedup spots, tolerable per this repo's own
+    helper-extraction-scan.md bar** (small, no correctness risk) —
+    not planned, listed for completeness: the repeated
+    "compact-unless-full" branch across 3 tool files, and the
+    identical Docker `filters` query-building in `listVolumes`/
+    `listNetworks`.
+  - **GitHub-side repo metadata** (no topics set; description is a
+    narrower/stale subset of README's actual lead line) — needs the
+    user's sign-off before touching public-facing repo settings, not
+    something to change unprompted.
+  - **Two Dependabot PRs open 25 days with no recorded decision**:
+    #11 (npm major-bump group — express 5/undici 8/zod 4/typescript 7;
+    note the zod-4-blocked reasoning that closed its predecessor PR #9
+    no longer holds, see Done above) and #10 (GitHub Actions major
+    bump, likely low-risk). Both are real compatibility/version
+    judgment calls for the user, not something to merge or close
+    silently. Also: Dependabot's configured labels
+    (`dependencies`/`npm`/`ci`/`docker`) don't exist in the repo, so
+    every PR has silently failed to label itself since the config was
+    written — cheap fix (`gh label create ...`) whenever someone's
+    doing repo-settings cleanup anyway.
 
 ## Open Decisions
 
