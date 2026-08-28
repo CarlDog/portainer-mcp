@@ -343,8 +343,38 @@ export class PortainerClient {
     return this.request("GET", "/api/stacks", query);
   }
 
-  async getStack(id: number): Promise<unknown> {
-    return this.request("GET", `/api/stacks/${id}`);
+  // Full stack details for MCP callers, per the tool's own advertised
+  // description, means including StackFileContent — the plain /stacks/{id}
+  // GET doesn't carry it (it's a separate endpoint). include_file defaults
+  // to true; the caller opts OUT with include_file: false, not in. On a
+  // fetch failure (rare: the stack record still returned fine) fail soft
+  // with StackFileError rather than silently omitting the field — a
+  // silent omission is exactly the "accepted and does nothing" complaint
+  // this fix exists to close. Deliberately not `noRedact: true`: this
+  // value reaches the MCP wire, unlike the internal round-trip fetches
+  // elsewhere in this file (redeployStack, setStackEnv) that feed a PUT
+  // right back to Portainer.
+  async getStack(
+    id: number,
+    opts: { includeFile?: boolean } = {},
+  ): Promise<unknown> {
+    const stack = await this.request<Record<string, unknown>>(
+      "GET",
+      `/api/stacks/${id}`,
+    );
+    if (opts.includeFile === false) return stack;
+    try {
+      const file = await this.request<{ StackFileContent: string }>(
+        "GET",
+        `/api/stacks/${id}/file`,
+      );
+      return { ...stack, StackFileContent: file.StackFileContent };
+    } catch (err) {
+      return {
+        ...stack,
+        StackFileError: err instanceof Error ? err.message : String(err),
+      };
+    }
   }
 
   async listContainers(
@@ -1293,12 +1323,19 @@ export function registerPortainerTools(
     {
       title: "Portainer: Get Stack",
       description:
-        "Get full stack details (compose file content, env, status, git config) by stack ID.",
+        "Get full stack details (compose file content, env, status, git config) by stack ID. Compose file content (StackFileContent) is included by default; set include_file=false to skip the extra fetch when you only need status/env/git config.",
       inputSchema: {
-        id: z.number().int().describe("Stack ID"),
+        stack_id: z.number().int().describe("Stack ID"),
+        include_file: z
+          .boolean()
+          .optional()
+          .describe(
+            "Include compose file content (StackFileContent). Default true.",
+          ),
       },
     },
-    async ({ id }) => asText(await p.getStack(id)),
+    async ({ stack_id, include_file }) =>
+      asText(await p.getStack(stack_id, { includeFile: include_file })),
   );
 
   server.registerTool(
