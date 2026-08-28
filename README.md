@@ -17,7 +17,7 @@ Sister to [`plex-mcp`](https://github.com/CarlDog/plex-mcp),
 
 ## Tools
 
-30 tools: 13 read tools plus 17 write tools with real side effects
+31 tools: 13 read tools plus 18 write tools with real side effects
 (container lifecycle, stack create/update/redeploy/delete). Secrets in
 Portainer/Docker responses are redacted client-side before reaching MCP
 callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
@@ -59,6 +59,7 @@ itself, no separate call or schedule needed.
 | `portainer_container_kill` | SIGKILL a container (not graceful) |
 | `portainer_container_delete` | Delete a container (irreversible; force=true to delete a running one) |
 | `portainer_recreate_container` | Recreate a container (optionally re-pull image); auto-prunes dangling images after |
+| `portainer_pull_image` | Pull an image without touching any container — use before a recreate/redeploy on a large image to avoid a client timeout landing on the destructive step |
 | `portainer_create_stack` | Create a new compose stack from a file body |
 | `portainer_create_git_stack` | Create a git-managed stack from a repository; optional AutoUpdate polling |
 | `portainer_update_stack_file` | Replace a stack's compose file content; auto-prunes dangling images after |

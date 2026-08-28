@@ -569,6 +569,7 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_container_restart` | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`) | Same SIGTERM/wait/SIGKILL/start as stop+start      |
 | `portainer_container_kill`    | `POST /api/endpoints/{id}/docker/containers/{id}/kill` (optional `?signal=`) | Skips graceful shutdown; requires `confirm: true`  |
 | `portainer_recreate_container`| `POST /api/docker/{id}/containers/{id}/recreate` body `{PullImage}`       | **Native handler** (NOT under the proxy tree); `confirm: true`; auto-prunes dangling images after (see below) |
+| `portainer_pull_image`        | `POST /api/endpoints/{id}/docker/images/create?fromImage=...`             | Docker proxy passthrough; body is newline-delimited JSON progress, not one JSON document; no `confirm` (non-destructive) |
 | `portainer_redeploy_stack`    | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack + GET file)      | Synchronous; refuses git stacks; `confirm: true`; auto-prunes dangling images after (see below) |
 | `portainer_update_stack_file` | `PUT /api/stacks/{id}?endpointId=N` (after raw GET stack)                 | Same endpoint as `redeploy_stack` with caller-supplied compose content; `confirm: true`; auto-prunes dangling images after (see below) |
 | `portainer_redeploy_git_stack`| `PUT /api/stacks/{id}/git/redeploy?endpointId=N` (after raw GET stack)    | Synchronous; refuses non-git stacks; round-trips Env + GitConfig; `confirm: true`; auto-prunes dangling images after (see below) |
@@ -616,16 +617,18 @@ relying on the shape.
 
 | Capability                  | Endpoint                                                                                | Risk class                        |
 |-----------------------------|-----------------------------------------------------------------------------------------|-----------------------------------|
-| Delete                      | `DELETE /api/endpoints/{id}/docker/containers/{id}` (optional `?force=true&v=true`)     | High                              |
+| ~~Delete~~                  | shipped 2026-08-18 as `portainer_container_delete` — see "Endpoints currently used" above | —                                |
 | Stats                       | `GET /api/endpoints/{id}/docker/containers/{id}/stats?stream=false`                     | Low                               |
 | Exec one-off command        | `POST /containers/{id}/exec` then `POST /exec/{id}/start` (HTTP hijack)                 | High (LLM RCE risk)               |
 
 ### Image operations
 
-~~List (Portainer)~~ and ~~Prune~~ shipped 2026-08-18 as
-`portainer_list_images` / `portainer_prune_images` — see "Endpoints
-currently used" above. One correction from the original candidate list:
-List (Portainer) is `GET /api/docker/{id}/images?withUsage=true` (no
+~~List (Portainer)~~, ~~Prune~~, and ~~Pull~~ shipped — List/Prune
+2026-08-18 as `portainer_list_images` / `portainer_prune_images`, Pull
+2026-08-28 as `portainer_pull_image` (public/anonymous registries
+only — see below) — see "Endpoints currently used" above. One
+correction from the original candidate list: List (Portainer) is
+`GET /api/docker/{id}/images?withUsage=true` (no
 `/endpoints/{id}/docker/` prefix — it's a native handler, confirmed
 against `docs/specs/portainer.json`'s `dockerImagesList` operation),
 not the path guessed below when this table was first drafted.
@@ -634,14 +637,24 @@ not the path guessed below when this table was first drafted.
 |--------------------|--------------------------------------------------------------------------------------------------------------|------------------------|
 | List (raw)         | `GET /api/endpoints/{id}/docker/images/json` (full Docker inspect shape)                                     | Low                    |
 | Inspect            | `GET /api/endpoints/{id}/docker/images/{name}/json`                                                          | Low                    |
-| Pull               | `POST /api/endpoints/{id}/docker/images/create?fromImage=...` — streaming JSONL progress                     | Medium                 |
 | Remove             | `DELETE /api/endpoints/{id}/docker/images/{name}` (optional `?force=true`)                                   | Medium                 |
 
-For image pull with private registry creds, Portainer rewrites
-`X-Registry-Auth` from a registry-id reference to the actual
-docker auth header. Send `X-Registry-Auth: base64(JSON({"registryId": N}))`
-to use Portainer-stored credentials, or pass standard Docker auth
-to forward unchanged.
+**Private-registry auth for image pull, not yet implemented
+(2026-08-28).** Portainer rewrites `X-Registry-Auth` from a registry-id
+reference to the actual docker auth header: send
+`X-Registry-Auth: base64(JSON({"registryId": N}))` to use
+Portainer-stored credentials (Settings > Registries), or pass standard
+Docker auth to forward unchanged. `portainer_pull_image` (shipped
+2026-08-28, see "Endpoints currently used" above) does not send this
+header at all — it only pulls from public/anonymous registries.
+Well-scoped future enhancement: an optional `registry_id` param on
+`portainer_pull_image`, mirroring `git_credential_id`'s pattern
+(reference a Portainer-stored credential by numeric id; no secret ever
+transits the tool call). Deliberately not built in the same pass as the
+tool itself — the OC memory that motivated `portainer_pull_image`
+(2026-08-01, NAS Ollama update) was a public-image pull with no auth
+need at all, so this stayed out of scope rather than being added
+speculatively.
 
 ### Network / volume operations
 

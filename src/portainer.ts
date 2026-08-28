@@ -550,6 +550,47 @@ export function parseDockerTimeFilter(
   );
 }
 
+export interface PullProgressResult {
+  status: "downloaded" | "up-to-date" | "unknown";
+  statusLine?: string;
+}
+
+// Docker's POST /images/create response body is newline-delimited JSON
+// progress objects, not one JSON document -- request<T>()'s JSON branch
+// can't parse it, hence the `raw: true` fetch + manual parse here. The
+// endpoint also returns HTTP 200 even when the pull fails (e.g. a
+// nonexistent tag), reporting the failure as an `{"error": ...}` object
+// mid-stream -- this must be scanned for and thrown, or a failed pull looks
+// identical to a successful one to the caller.
+export function parsePullProgress(raw: string): PullProgressResult {
+  let statusLine: string | undefined;
+  for (const line of raw.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "") continue;
+    let obj: unknown;
+    try {
+      obj = JSON.parse(trimmed);
+    } catch {
+      continue; // tolerate a stray non-JSON line rather than fail the whole pull
+    }
+    if (obj === null || typeof obj !== "object") continue;
+    const rec = obj as Record<string, unknown>;
+    if (typeof rec.error === "string" && rec.error.length > 0) {
+      throw new Error(`Image pull failed: ${rec.error}`);
+    }
+    if (typeof rec.status === "string" && rec.status.startsWith("Status: ")) {
+      statusLine = rec.status;
+    }
+  }
+  if (statusLine?.includes("Downloaded newer image")) {
+    return { status: "downloaded", statusLine };
+  }
+  if (statusLine?.includes("Image is up to date")) {
+    return { status: "up-to-date", statusLine };
+  }
+  return { status: "unknown", statusLine };
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -775,6 +816,25 @@ export class PortainerClient {
       { raw: true },
     );
     return demuxDockerLogs(raw);
+  }
+
+  // Pulls an image without touching any container -- splits the slow part
+  // of a recreate-with-pull off from the fast part, so a large image no
+  // longer risks blowing the MCP client's own tool-call timeout on a
+  // destructive recreate call. See portainer_recreate_container's
+  // description for the paired usage.
+  async pullImage(
+    endpointId: number,
+    image: string,
+  ): Promise<PullProgressResult> {
+    const raw = await this.request<Buffer>(
+      "POST",
+      `/api/endpoints/${endpointId}/docker/images/create`,
+      { fromImage: image },
+      undefined,
+      { raw: true },
+    );
+    return parsePullProgress(raw.toString("utf8"));
   }
 
   async systemStatus(): Promise<unknown> {
@@ -2521,7 +2581,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Recreate Container",
       description:
-        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded. TIMEOUT RISK: image pull + stop + remove + create all happen inline before this call returns, so a large image over a slow connection can take minutes and may exceed the calling MCP client's own tool-call timeout. If that happens, the recreate is NOT aborted server-side — it keeps running in Portainer regardless of whether the client gave up waiting. If this call appears to time out, verify the actual result with portainer_get_container rather than assuming it failed.",
+        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded. TIMEOUT RISK: image pull + stop + remove + create all happen inline before this call returns, so a large image over a slow connection can take minutes and may exceed the calling MCP client's own tool-call timeout. If that happens, the recreate is NOT aborted server-side — it keeps running in Portainer regardless of whether the client gave up waiting. If this call appears to time out, verify the actual result with portainer_get_container rather than assuming it failed. For a large image, prefer calling portainer_pull_image first, then this tool with pull_image: false — the pull (slow, safe to retry) is decoupled from the recreate (fast, the actually destructive part), so a timeout can no longer land mid-recreate.",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
@@ -2544,6 +2604,28 @@ export function registerPortainerTools(
           pullImage: pull_image ?? true,
         }),
       ),
+  );
+
+  server.registerTool(
+    "portainer_pull_image",
+    {
+      title: "Portainer: Pull Image",
+      description:
+        'Pull a Docker image on an endpoint without touching any container. Use this before portainer_recreate_container(pull_image: false) when the image is large — splitting the slow pull off from the fast recreate avoids the MCP client\'s own tool-call timeout landing on the destructive half of the operation. A pull is safe to retry after a timeout: Docker caches already-downloaded layers, so a retry resumes rather than restarts from scratch (unlike a timed-out recreate, where a blind retry risks racing a second recreate against the one still running). Reports whether a new layer was actually downloaded (`status: "downloaded"`) or the image was already current (`status: "up-to-date"`) — a call returning at all doesn\'t by itself say which. No confirm gate: pulling only adds an image, it never removes or modifies anything running. Supports public/anonymous registries (Docker Hub, GHCR, etc.) only — it does not send any registry credential, so a private-registry pull fails with an auth error even if a matching credential is stored in Portainer (Settings > Registries). Adding that support is a well-scoped future enhancement (reference a stored credential by id, same pattern as create_git_stack\'s git_credential_id), not built here because the case that motivated this tool was a public-image pull.',
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          image: z
+            .string()
+            .min(1)
+            .describe(
+              'Image reference to pull, e.g. "nginx:1.27" or "ghcr.io/carldog/portainer-mcp:latest". Omitting a tag pulls "latest".',
+            ),
+        })
+        .strict(),
+    },
+    async ({ endpoint_id, image }) =>
+      asText(await p.pullImage(endpoint_id, image)),
   );
 
   server.registerTool(

@@ -687,6 +687,43 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   manual workaround (`portainer_list_containers` label filter +
   `portainer_container_delete`). 7 new table-driven test cases
   (144 → 151 total).
+- **`portainer_pull_image` (2026-08-28, same-day follow-up) — splits the
+  slow pull off `portainer_recreate_container` to fix its documented
+  timeout risk for real, not just in the docs.** The 2026-08-01 OC
+  dogfooding memory's actual ask (a NAS Ollama update whose recreate+pull
+  blew the MCP client's tool-call timeout) had two options: a job-id/
+  status-poll subsystem, or a separate pull tool so the recreate itself
+  stays fast. Checked with the advisor before building: the job-id
+  option would be this codebase's first piece of server-side stateful
+  job tracking in an otherwise deliberately stateless design — a real
+  architectural decision, not a continuation of already-scoped work — so
+  only the pull-split half shipped. New client method `pullImage` calls
+  Docker's `POST /images/create` (proxied, not in the Portainer Swagger
+  spec — Docker-proxy paths never are) via `request<T>()`'s existing
+  `raw: true` opt-out, since the response is newline-delimited JSON
+  progress objects, not one JSON document. New pure helper
+  `parsePullProgress` decodes it: scans every line for a mid-stream
+  `{"error": ...}` object (the endpoint returns HTTP 200 even on a
+  failed pull, e.g. a nonexistent tag — recyclarr's own `manifest
+  unknown` 404 from the 2026-08-25 dogfooding note is exactly this
+  shape) and throws if found, and picks out the terminal `"Status: ..."`
+  line to report `status: "downloaded" | "up-to-date" | "unknown"`. No
+  `confirm: true` gate — pulling only adds an image, matching the
+  existing un-gated start/restart tools, not the destructive ones.
+  `portainer_recreate_container`'s description now points at the new
+  tool for large images. Public/anonymous registries only — no
+  registry credential is sent, so a private-registry pull fails with
+  an auth error even with a matching credential stored in Portainer
+  (Settings > Registries); PORTAINER-API.md documents the
+  already-known `X-Registry-Auth: base64(JSON({"registryId": N}))`
+  mechanism as a well-scoped future `registry_id` param, mirroring
+  `git_credential_id`, deliberately not built now since the motivating
+  case (2026-08-01 NAS Ollama update) was a public-image pull. Also
+  fixed two stale rows found while touching PORTAINER-API.md's
+  "haven't built yet" tables: container Delete (already shipped
+  2026-08-18 as `portainer_container_delete`, still listed as
+  not-built) and this same Pull row. 8 new table-driven test cases
+  (151 → 159 total).
 
 ## Next
 
@@ -740,8 +777,12 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     lifecycle — different from per-container start/stop)
   - ~~`portainer_image_pull` / `_image_list` / `_image_inspect`~~
     `_image_list` shipped 2026-08-18 as `portainer_list_images`
-    (Portainer-native `withUsage` shape). `_image_pull` / `_image_inspect`
-    still not built — low priority, no concrete use case yet.
+    (Portainer-native `withUsage` shape). `_image_pull` shipped
+    2026-08-28 as `portainer_pull_image` — the concrete use case
+    that was missing turned up the same day (see Done below:
+    splitting the slow pull off `portainer_recreate_container` to
+    fix its timeout risk). `_image_inspect` still not built — low
+    priority, no concrete use case yet.
   - `portainer_endpoint_inspect` (cheap pre-flight guard for
     write tools)
   - `portainer_system_version` (richer than system_status when

@@ -285,15 +285,15 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-30 tools registered in `src/portainer.ts` — 13 read tools (endpoints,
+31 tools registered in `src/portainer.ts` — 13 read tools (endpoints,
 stacks, containers, logs, volumes, networks, images, system status,
-env-value comparison) and 17 write tools (container start/stop/restart/
-kill/delete/recreate; stack create/update/env/redeploy/git-convert/
+env-value comparison) and 18 write tools (container start/stop/restart/
+kill/delete/recreate; image pull; stack create/update/env/redeploy/git-convert/
 delete; git auth; image and network prune). The v1 "read-only initial
 scope" is history — see STATUS.md for the authoritative per-tool
 chronology and the README for the current tool table.
 
-**All 30 tool `inputSchema`s enforce `.strict()`** — an unknown or
+**All 31 tool `inputSchema`s enforce `.strict()`** — an unknown or
 misspelled input key is rejected with a clear "unrecognized key" error
 at the MCP validation layer instead of being silently stripped (zod's
 default raw-shape behavior) and surfacing later as a confusing
@@ -344,9 +344,9 @@ See STATUS.md for the live-verified details.
 - `npm test` — `node --test` (via tsx) over `test/*.test.ts`. One file
   per pure-function area (`redact`, `containers`, `env-compare`,
   `images`, `http-transport`, `env-warnings`, `compact-projections`,
-  `demux-logs`, `container-changes`, `prune-warning`, `transport`,
-  `version-sync`) — table-driven unit tests against pure functions
-  extracted from the client/tool layer, no mocking involved.
+  `demux-logs`, `container-changes`, `prune-warning`, `pull-progress`,
+  `transport`, `version-sync`) — table-driven unit tests against pure
+  functions extracted from the client/tool layer, no mocking involved.
 - For anything that talks to Portainer, prefer integration tests
   against a real instance behind env-gated tests (don't mock — see
   working-style note about mocked-vs-real divergence).
