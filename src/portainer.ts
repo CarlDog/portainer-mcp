@@ -622,14 +622,24 @@ interface RawEnvEntry {
 }
 
 export class PortainerClient {
-  private readonly insecureDispatcher: Agent | undefined;
+  // Always constructed (not just for the insecure-TLS case) so every request
+  // goes through an explicit Agent rather than falling through to undici's
+  // implicit global default. allowH2 is pinned false on both branches:
+  // undici 8 flipped its own default from false to true, and this repo has
+  // zero operational data on how HTTP/2 negotiates against a home-lab
+  // Portainer/Docker-proxy deployment (possibly sitting behind a reverse
+  // proxy) -- the undici 6->8 bump stays a pure version-currency move, not
+  // an opportunistic behavior change, especially on the self-signed-cert
+  // path this Agent has real incident history on (see the request() comment
+  // below).
+  private readonly dispatcher: Agent;
 
   constructor(private readonly config: PortainerConfig) {
-    if (!config.verifyTls) {
-      this.insecureDispatcher = new Agent({
-        connect: { rejectUnauthorized: false },
-      });
-    }
+    this.dispatcher = new Agent(
+      config.verifyTls
+        ? { allowH2: false }
+        : { allowH2: false, connect: { rejectUnauthorized: false } },
+    );
   }
 
   private async request<T>(
@@ -666,9 +676,7 @@ export class PortainerClient {
     if (bodyStr !== undefined) {
       init.body = bodyStr;
     }
-    if (this.insecureDispatcher) {
-      init.dispatcher = this.insecureDispatcher;
-    }
+    init.dispatcher = this.dispatcher;
     // Must be undici's own request(), NOT global fetch. Node's global fetch
     // is backed by the undici copy bundled inside Node, so an Agent built
     // from this package is a foreign object to it and the `dispatcher`

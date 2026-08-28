@@ -13,6 +13,34 @@ rather than after the fact.
 
 ## [Unreleased]
 
+## [0.8.2] - 2026-08-28
+
+### Changed
+
+- Bumped `undici` 6.28.0 → 8.10.0, the second of three majors bundled in
+  Dependabot PR #11 (after zod; express and typescript remain deferred —
+  typescript specifically because `typescript-eslint` hard-blocks TS7
+  today, see STATUS.md). Researched before touching anything: undici 8
+  flips its `allowH2` default from `false` to `true`, so `PortainerClient`
+  now always constructs an explicit `Agent` (not just for the insecure-TLS
+  case) with `allowH2: false` pinned on both branches — this bump stays a
+  pure version-currency move rather than an opportunistic behavior change,
+  especially on the self-signed-cert dispatcher path that has real
+  incident history (the node:22-alpine → node:26-alpine regression this
+  file's own comments document). Also bumped `engines.node` to
+  `>=22.19.0` to match undici 8's actual floor (Docker image and CI both
+  already clear it — documentation accuracy, not a functional change).
+  `Dispatcher.HttpMethod`'s type shape is unchanged for this codebase's
+  usage. Added `test/tls-dispatcher.test.ts`: a real self-signed TLS
+  server (generated at runtime via the new `selfsigned` devDependency,
+  nothing committed) proving the dispatcher is genuinely honored
+  end-to-end — the existing `test/transport.test.ts` is source-level only
+  and structurally cannot catch "the new undici major changed how the
+  Agent options map onto an actual TLS handshake." Verified with a full
+  `docker build` (multi-stage; `selfsigned` correctly pruned from the
+  runtime image by the existing `npm prune --omit=dev` step) and a
+  container smoke test.
+
 ## [0.8.1] - 2026-08-28
 
 ### Changed

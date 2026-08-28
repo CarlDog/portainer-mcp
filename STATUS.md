@@ -823,8 +823,9 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   a JS exception rather than returning an MCP `isError: true` result,
   which produced three false "PROBLEM" lines before the bug was
   found and the script rewritten to inspect the actual result object.
-  express/undici/typescript remain pinned; PR #11 still tracks those
-  three and stays open.
+  express/undici/typescript remained pinned at the time; undici was
+  bumped separately the same day (see below), express and typescript
+  remain deferred, and PR #11 still tracks all three.
 - **Dependabot PR #10 merged, and the label-config gap fixed
   (2026-08-28).** #10 (GitHub Actions major bump — `actions/checkout`
   6→7, `gitleaks/gitleaks-action` 2→3) checked out low-risk on
@@ -849,6 +850,52 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   time, retroactively applied `dependencies`+`npm` to the still-open
   PR #11 by hand; new PRs will label themselves correctly going
   forward.
+- **undici 6.28.0 → 8.10.0 (2026-08-28), second of the three PR #11
+  majors, researched before touching anything (a dedicated research
+  workflow, not assumed from training data — this ecosystem moves too
+  fast to trust memory on a specific version jump).** The one real
+  behavior change relevant here: undici 8 flips `allowH2`'s default
+  from `false` to `true`. `PortainerClient` previously only
+  constructed an `Agent` for the insecure-TLS case, falling through to
+  undici's implicit global default (also now H2-by-default) when
+  `verifyTls: true`. Changed to always construct an explicit `Agent`
+  with `allowH2: false` pinned on both branches — this stays a pure
+  version-currency move, not an opportunistic behavior change,
+  especially on the self-signed-cert path with real incident history
+  (the node:22-alpine → node:26-alpine regression already documented
+  in this file's own comments). `engines.node` bumped to `>=22.19.0`
+  to match undici 8's actual floor (doc-accuracy only — the Docker
+  image and CI already exceed it). Everything else researched and
+  confirmed not applicable to this codebase's usage: dropped
+  `throwOnError` option, dropped legacy `interceptors`, the raw
+  `dispatch()` callback API replaced with a controller-based one,
+  `onBodySent` signature change, stricter `Blob`/`File` handling,
+  internal global-dispatcher re-keying — none of these appear anywhere
+  in this codebase's usage (only the high-level `request()` function
+  is ever called). Added `test/tls-dispatcher.test.ts`: a real
+  self-signed TLS server (generated at runtime via a new `selfsigned`
+  devDependency, nothing committed — this repo's pre-commit hook runs
+  gitleaks, which would flag a committed private key even as a test
+  fixture) proving the dispatcher is genuinely honored end-to-end, both
+  that `verifyTls: false` connects successfully and that
+  `verifyTls: true` genuinely rejects the same server. This closes a
+  real verification gap: the existing `test/transport.test.ts` is a
+  documented source-level regex assertion, structurally unable to
+  catch a major-version change to how the Agent options actually map
+  onto a TLS handshake — the exact bug class the original MCP-F07
+  incident was. (First attempt at this test hung the process
+  indefinitely: two `it()` blocks each started a fresh HTTPS server
+  but shared one `server` variable, so the first test's server was
+  overwritten and orphaned before ever being closed — a listening
+  server socket alone blocks Node from exiting. Fixed by sharing one
+  server across both tests via `before`/`after`.) Verified with a full
+  `docker build` (multi-stage — confirmed `npm prune --omit=dev`
+  correctly strips `selfsigned` back out of the runtime image) and a
+  container smoke test. Not independently verified: whether the
+  operator's actual NAS Portainer instance offers HTTP/2 via ALPN on
+  its TLS listener — moot for correctness now that `allowH2: false` is
+  pinned, but a live call against the real instance after deploying is
+  still the right final check per this repo's own testing philosophy.
 
 ## Next
 
