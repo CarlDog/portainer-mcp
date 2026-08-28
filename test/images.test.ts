@@ -36,7 +36,7 @@ describe("withImagePrune", () => {
     });
   });
 
-  it("does not clobber a result field literally named imagePrune", () => {
+  it("overwrites a pre-existing result field literally named imagePrune with the fresh prune result", () => {
     const merged = withImagePrune(
       { imagePrune: "original" },
       { SpaceReclaimed: 123 },

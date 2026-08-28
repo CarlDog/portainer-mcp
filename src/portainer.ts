@@ -8,7 +8,7 @@ import { registerImageTools } from "./tools/images.js";
 import { registerContainerTools } from "./tools/containers.js";
 import { registerStackTools } from "./tools/stacks.js";
 
-export interface PortainerConfig {
+interface PortainerConfig {
   url: string;
   apiKey: string;
   verifyTls: boolean;
@@ -127,7 +127,7 @@ export function redactSecrets(value: unknown): unknown {
   return value;
 }
 
-export interface ContainerListOptions {
+interface ContainerListOptions {
   all?: boolean;
   name?: string;
   label?: string;
@@ -272,7 +272,7 @@ export function compactEndpoint(e: unknown): unknown {
   };
 }
 
-export interface ImagePruneOptions {
+interface ImagePruneOptions {
   allUnused?: boolean;
 }
 
@@ -291,24 +291,30 @@ export function imagePruneQuery(
   return { filters: JSON.stringify({ dangling: [dangling] }) };
 }
 
-// Merges an automatic post-redeploy image-prune result into a redeploy/
-// recreate response without clobbering it. Portainer's redeploy/recreate
-// endpoints return the updated Stack or Container object (a JSON object),
-// so the common case spreads cleanly; the fallback branch exists only in
-// case a response shape ever turns out not to be a plain object.
-export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
+// Shared by every with*() response-merge helper below: spread `value` onto
+// `result` under `key` when `result` is a plain object (the common case --
+// Portainer's write endpoints return the updated Stack/Container JSON), or
+// wrap it when `result` isn't a plain object (defensive fallback in case a
+// response shape ever turns out not to be one).
+function mergeField(result: unknown, key: string, value: unknown): unknown {
   if (result !== null && typeof result === "object" && !Array.isArray(result)) {
-    return { ...(result as Record<string, unknown>), imagePrune };
+    return { ...(result as Record<string, unknown>), [key]: value };
   }
-  return { result, imagePrune };
+  return { result, [key]: value };
 }
 
-export interface ContainerIdentity {
+// Merges an automatic post-redeploy image-prune result into a redeploy/
+// recreate response without clobbering it.
+export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
+  return mergeField(result, "imagePrune", imagePrune);
+}
+
+interface ContainerIdentity {
   name: string;
   id: string;
 }
 
-export interface ContainerChange {
+interface ContainerChange {
   name: string;
   status: "recreated" | "unchanged" | "removed" | "added";
 }
@@ -360,10 +366,7 @@ export function withContainerChanges(
 ): unknown {
   if (before === null || after === null) return result;
   const containerChanges = diffContainerRecreation(before, after);
-  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
-    return { ...(result as Record<string, unknown>), containerChanges };
-  }
-  return { result, containerChanges };
+  return mergeField(result, "containerChanges", containerChanges);
 }
 
 function escapeRegExp(s: string): string {
@@ -395,10 +398,7 @@ export function findUnreferencedEnvKeys(
 // without clobbering it -- same pattern as withImagePrune.
 export function withEnvWarnings(result: unknown, warnings: string[]): unknown {
   if (warnings.length === 0) return result;
-  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
-    return { ...(result as Record<string, unknown>), envWarnings: warnings };
-  }
-  return { result, envWarnings: warnings };
+  return mergeField(result, "envWarnings", warnings);
 }
 
 // Portainer's `Prune` field on PUT /stacks/{id} and .../git/redeploy only
@@ -429,23 +429,20 @@ export function withPruneWarning(
   warning: string | null,
 ): unknown {
   if (warning === null) return result;
-  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
-    return { ...(result as Record<string, unknown>), pruneWarning: warning };
-  }
-  return { result, pruneWarning: warning };
+  return mergeField(result, "pruneWarning", warning);
 }
 
-export interface EnvSideRaw {
+interface EnvSideRaw {
   found: boolean;
   value: string;
 }
 
-export interface EnvSideResult {
+interface EnvSideResult {
   found: boolean;
   empty: boolean;
 }
 
-export interface CompareEnvValuesResult {
+interface CompareEnvValuesResult {
   match: boolean;
   a: EnvSideResult;
   b: EnvSideResult;
@@ -554,7 +551,7 @@ export function parseDockerTimeFilter(
   );
 }
 
-export interface PullProgressResult {
+interface PullProgressResult {
   status: "downloaded" | "up-to-date" | "unknown";
   statusLine?: string;
 }
@@ -593,6 +590,35 @@ export function parsePullProgress(raw: string): PullProgressResult {
     return { status: "up-to-date", statusLine };
   }
   return { status: "unknown", statusLine };
+}
+
+// Shapes of a raw (noRedact) GET /api/stacks/{id} response's git-auth and
+// env sub-structures. Read identically by several PortainerClient methods
+// that each need their own round-trip of the same fields to avoid
+// Portainer's wipe-trap endpoints (see docs/PORTAINER-API.md "Env
+// round-trip is required" and "Git stacks vs file stacks"). RawGitConfig
+// includes TLSSkipVerify even though only setGitAuth reads it -- callers
+// that don't need it simply don't reference the field, and a superset type
+// here is safe since every caller narrows via optional chaining.
+interface RawAuth {
+  Username?: string;
+  AuthorizationType?: number;
+}
+interface RawGitConfig {
+  ReferenceName?: string;
+  TLSSkipVerify?: boolean;
+  Authentication?: RawAuth | null;
+}
+// Portainer's /stacks endpoints return env entries in lowercase
+// ({name, value}), but this dual-case shape guards against either casing
+// -- see scrubEnvArray for the same rule applied to the redactor's own env
+// scan. Carries a real correctness rule (which casing key exists) that
+// must stay in sync everywhere it's read.
+interface RawEnvEntry {
+  name?: string;
+  Name?: string;
+  value?: string;
+  Value?: string;
 }
 
 export class PortainerClient {
@@ -759,7 +785,7 @@ export class PortainerClient {
     endpointId: number,
     containerId: string,
     varName: string,
-  ): Promise<{ found: boolean; value: string }> {
+  ): Promise<EnvSideRaw> {
     interface RawContainer {
       Config?: { Env?: string[] };
     }
@@ -1189,18 +1215,46 @@ export class PortainerClient {
     );
   }
 
+  // Shared by redeployGitStack and setStackEnv's git-managed branch: both
+  // PUT to /api/stacks/{id}/git/redeploy, and the handler unconditionally
+  // overwrites repositoryReferenceName/env/repullImageAndRedeploy/prune/
+  // repositoryAuthentication (+username/password/authorizationType when
+  // auth exists) -- see docs/PORTAINER-API.md "Env round-trip is required".
+  // Omitting any of these wipes them, so every caller of this endpoint must
+  // round-trip the same fields; callers pass their own resolved env/prune
+  // since redeployGitStack lets the caller override the stored prune value
+  // while setStackEnv always preserves it.
+  private buildGitRedeployPayload(
+    gitConfig: RawGitConfig,
+    env: unknown[],
+    opts: { pullImage: boolean; prune: boolean },
+  ): Record<string, unknown> {
+    const auth = gitConfig.Authentication;
+    const payload: Record<string, unknown> = {
+      repositoryReferenceName: gitConfig.ReferenceName ?? "",
+      env,
+      repullImageAndRedeploy: opts.pullImage,
+      prune: opts.prune,
+      repositoryAuthentication: auth != null,
+    };
+    if (auth != null) {
+      // Saved password is preserved on the server side when password is
+      // empty AND existing GitConfig.Authentication is set, per the handler.
+      // We can never read the saved password back (it's blanked on response),
+      // so we always send empty and let Portainer re-use what it has.
+      payload.repositoryUsername = auth.Username ?? "";
+      payload.repositoryPassword = "";
+      if (auth.AuthorizationType !== undefined) {
+        payload.repositoryAuthorizationType = auth.AuthorizationType;
+      }
+    }
+    return payload;
+  }
+
   async redeployGitStack(
     stackId: number,
     opts: { pullImage: boolean; prune?: boolean },
   ): Promise<unknown> {
-    interface RawAuth {
-      Username?: string;
-      AuthorizationType?: number;
-    }
-    interface RawGitConfig {
-      ReferenceName?: string;
-      Authentication?: RawAuth | null;
-    }
     interface RawStack {
       Id: number;
       Type: number;
@@ -1227,29 +1281,12 @@ export class PortainerClient {
         `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; git redeploy supports only Compose (2) and Swarm (1). Kubernetes git stacks have a different update flow.`,
       );
     }
-    const auth = stack.GitConfig.Authentication;
-    const payload: Record<string, unknown> = {
-      // All four are unconditionally assigned by the handler — omitting wipes
-      // them. Round-trip the existing values so a "redeploy as-is" call doesn't
-      // silently destroy the stack's git/env config.
-      repositoryReferenceName: stack.GitConfig.ReferenceName ?? "",
-      env: stack.Env ?? [],
-      repullImageAndRedeploy: opts.pullImage,
-      prune: opts.prune ?? stack.Option?.Prune ?? false,
-      repositoryAuthentication: auth != null,
-    };
-    const effectivePrune = payload.prune as boolean;
-    if (auth != null) {
-      // Saved password is preserved on the server side when password is
-      // empty AND existing GitConfig.Authentication is set, per the handler.
-      // We can never read the saved password back (it's blanked on response),
-      // so we always send empty and let Portainer re-use what it has.
-      payload.repositoryUsername = auth.Username ?? "";
-      payload.repositoryPassword = "";
-      if (auth.AuthorizationType !== undefined) {
-        payload.repositoryAuthorizationType = auth.AuthorizationType;
-      }
-    }
+    const effectivePrune = opts.prune ?? stack.Option?.Prune ?? false;
+    const payload = this.buildGitRedeployPayload(
+      stack.GitConfig,
+      stack.Env ?? [],
+      { pullImage: opts.pullImage, prune: effectivePrune },
+    );
     const before = await this.trySnapshotStackContainers(
       stack.EndpointId,
       stack.Name,
@@ -1308,22 +1345,22 @@ export class PortainerClient {
     return withImagePrune(result, imagePrune);
   }
 
-  async createStack(
+  // Shared pre-flight name-collision check for createStack/createGitStack —
+  // refuses if any stack on this endpoint already has this name. Catches two
+  // failure modes:
+  //   1. Portainer's silent-nuke trap on standalone/string create —
+  //      checkAndCleanStackDupFromSwarm deletes any existing Swarm stack
+  //      with the same name on the same endpoint without warning.
+  //   2. Honest user error / LLM hallucinating a stack name that
+  //      already exists. Either way, refusing here is safer than
+  //      letting Portainer silently destroy state.
+  // `redeployToolName` is the tool to suggest instead in the error message —
+  // the two callers have different redeploy tools for an existing stack.
+  private async assertNoStackNameCollision(
     endpointId: number,
-    spec: {
-      name: string;
-      composeContent: string;
-      env?: Array<{ name: string; value: string }>;
-    },
-  ): Promise<unknown> {
-    // Pre-flight name-collision check across all stacks on this endpoint.
-    // Catches two failure modes:
-    //   1. Portainer's silent-nuke trap on standalone/string create —
-    //      checkAndCleanStackDupFromSwarm deletes any existing Swarm stack
-    //      with the same name on the same endpoint without warning.
-    //   2. Honest user error / LLM hallucinating a stack name that
-    //      already exists. Either way, refusing here is safer than
-    //      letting Portainer silently destroy state.
+    name: string,
+    redeployToolName: string,
+  ): Promise<void> {
     interface RawStackSummary {
       Name: string;
       EndpointId: number;
@@ -1333,12 +1370,26 @@ export class PortainerClient {
       "/api/stacks",
       { filters: JSON.stringify({ EndpointId: endpointId }) },
     );
-    const collision = existing.find((s) => s.Name === spec.name);
-    if (collision) {
+    if (existing.find((s) => s.Name === name)) {
       throw new Error(
-        `Stack "${spec.name}" already exists on endpoint ${endpointId}. Refusing to create — use portainer_redeploy_stack to update an existing stack, or portainer_delete_stack first if you really want to recreate from scratch.`,
+        `Stack "${name}" already exists on endpoint ${endpointId}. Refusing to create — use ${redeployToolName} to update an existing stack, or portainer_delete_stack first if you really want to recreate from scratch.`,
       );
     }
+  }
+
+  async createStack(
+    endpointId: number,
+    spec: {
+      name: string;
+      composeContent: string;
+      env?: Array<{ name: string; value: string }>;
+    },
+  ): Promise<unknown> {
+    await this.assertNoStackNameCollision(
+      endpointId,
+      spec.name,
+      "portainer_redeploy_stack",
+    );
     return this.request(
       "POST",
       "/api/stacks/create/standalone/string",
@@ -1374,23 +1425,11 @@ export class PortainerClient {
         "Provide either git_credential_id or username/password for git auth, not both.",
       );
     }
-    // Same pre-flight name-collision check as createStack — refuse if any
-    // stack on this endpoint already shares the name. Catches the silent
-    // Swarm-stack nuke trap and prevents accidental overwrites.
-    interface RawStackSummary {
-      Name: string;
-      EndpointId: number;
-    }
-    const existing = await this.request<RawStackSummary[]>(
-      "GET",
-      "/api/stacks",
-      { filters: JSON.stringify({ EndpointId: endpointId }) },
+    await this.assertNoStackNameCollision(
+      endpointId,
+      spec.name,
+      "portainer_redeploy_git_stack",
     );
-    if (existing.find((s) => s.Name === spec.name)) {
-      throw new Error(
-        `Stack "${spec.name}" already exists on endpoint ${endpointId}. Refusing to create — use portainer_redeploy_git_stack to update an existing git stack, or portainer_delete_stack first if you really want to recreate from scratch.`,
-      );
-    }
     const body: Record<string, unknown> = {
       Name: spec.name,
       RepositoryURL: spec.repositoryUrl,
@@ -1461,12 +1500,6 @@ export class PortainerClient {
       throw new Error(
         "Provide either git_credential_id or username/password for git auth, not both.",
       );
-    }
-    interface RawEnvEntry {
-      name?: string;
-      Name?: string;
-      value?: string;
-      Value?: string;
     }
     interface RawStack {
       Id: number;
@@ -1567,15 +1600,6 @@ export class PortainerClient {
     stackId: number,
     spec: { username: string; password: string } | { remove: true },
   ): Promise<unknown> {
-    interface RawAuth {
-      Username?: string;
-      AuthorizationType?: number;
-    }
-    interface RawGitConfig {
-      ReferenceName?: string;
-      TLSSkipVerify?: boolean;
-      Authentication?: RawAuth | null;
-    }
     interface RawStack {
       Id: number;
       Type: number;
@@ -1649,20 +1673,6 @@ export class PortainerClient {
         "set_stack_env requires at least one entry in `set` or `remove`. Refusing no-op call.",
       );
     }
-    interface RawEnvEntry {
-      name?: string;
-      Name?: string;
-      value?: string;
-      Value?: string;
-    }
-    interface RawAuth {
-      Username?: string;
-      AuthorizationType?: number;
-    }
-    interface RawGitConfig {
-      ReferenceName?: string;
-      Authentication?: RawAuth | null;
-    }
     interface RawStack {
       Id: number;
       Type: number;
@@ -1728,25 +1738,10 @@ export class PortainerClient {
     // can't change container env without restart, but neither pulls a
     // new image unless pullImage is true (env-only intent default).
     if (stack.GitConfig != null) {
-      const auth = stack.GitConfig.Authentication;
-      const payload: Record<string, unknown> = {
-        // Round-trip the git config wipe-trap fields per
-        // PORTAINER-API.md "Env round-trip" gotcha.
-        repositoryReferenceName: stack.GitConfig.ReferenceName ?? "",
-        env: newEnv,
-        repullImageAndRedeploy: changes.pullImage ?? false,
+      const payload = this.buildGitRedeployPayload(stack.GitConfig, newEnv, {
+        pullImage: changes.pullImage ?? false,
         prune: stack.Option?.Prune ?? false,
-        repositoryAuthentication: auth != null,
-      };
-      if (auth != null) {
-        payload.repositoryUsername = auth.Username ?? "";
-        // Empty password — Portainer reuses saved password if existing
-        // GitConfig.Authentication is set.
-        payload.repositoryPassword = "";
-        if (auth.AuthorizationType !== undefined) {
-          payload.repositoryAuthorizationType = auth.AuthorizationType;
-        }
-      }
+      });
       // git/redeploy always re-pulls from the remote first, regardless of
       // pullImage/RepullImageAndRedeploy -- confirmed against the pinned
       // Swagger spec (docs/specs/portainer.json: "Pull and redeploy a

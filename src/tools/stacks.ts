@@ -212,10 +212,12 @@ export function registerStackTools(
             ),
           env: z
             .array(
-              z.object({
-                name: z.string(),
-                value: z.string(),
-              }),
+              z
+                .object({
+                  name: z.string(),
+                  value: z.string(),
+                })
+                .strict(),
             )
             .optional()
             .describe(
@@ -275,10 +277,12 @@ export function registerStackTools(
             ),
           env: z
             .array(
-              z.object({
-                name: z.string(),
-                value: z.string(),
-              }),
+              z
+                .object({
+                  name: z.string(),
+                  value: z.string(),
+                })
+                .strict(),
             )
             .optional()
             .describe(
@@ -519,10 +523,12 @@ export function registerStackTools(
           stack_id: z.number().int().describe("Stack ID"),
           set: z
             .array(
-              z.object({
-                name: z.string().min(1),
-                value: z.string(),
-              }),
+              z
+                .object({
+                  name: z.string().min(1),
+                  value: z.string(),
+                })
+                .strict(),
             )
             .optional()
             .describe(
