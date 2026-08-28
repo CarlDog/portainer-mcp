@@ -299,6 +299,69 @@ export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
   return { result, imagePrune };
 }
 
+export interface ContainerIdentity {
+  name: string;
+  id: string;
+}
+
+export interface ContainerChange {
+  name: string;
+  status: "recreated" | "unchanged" | "removed" | "added";
+}
+
+// Compares a stack's containers before/after a redeploy-shaped write to
+// answer the question a redeploy "succeeding" doesn't: did anything
+// actually change? A 200 response only means Portainer accepted the
+// call — set_stack_env/redeploy_stack have both been caught silently
+// no-op'ing on a live container while reporting success (e.g. a
+// compose file that hardcodes a value instead of referencing ${VAR} --
+// envWarnings catches that specific case, this catches the general
+// one). Matched by container name (Docker's `Names[0]`, stable across
+// a recreate); a changed Id under the same name means recreated, same
+// Id means the write had no effect on that container.
+export function diffContainerRecreation(
+  before: ContainerIdentity[],
+  after: ContainerIdentity[],
+): ContainerChange[] {
+  const beforeMap = new Map(before.map((c) => [c.name, c.id]));
+  const afterMap = new Map(after.map((c) => [c.name, c.id]));
+  const names = new Set([...beforeMap.keys(), ...afterMap.keys()]);
+  const changes: ContainerChange[] = [];
+  for (const name of names) {
+    const beforeId = beforeMap.get(name);
+    const afterId = afterMap.get(name);
+    if (beforeId === undefined) {
+      changes.push({ name, status: "added" });
+    } else if (afterId === undefined) {
+      changes.push({ name, status: "removed" });
+    } else if (beforeId !== afterId) {
+      changes.push({ name, status: "recreated" });
+    } else {
+      changes.push({ name, status: "unchanged" });
+    }
+  }
+  return changes.sort((a, b) => a.name.localeCompare(b.name));
+}
+
+// Merges the container-recreation diff onto a redeploy-shaped response,
+// same additive pattern as withImagePrune/withEnvWarnings. `null` for
+// either snapshot means the pre/post container list couldn't be read
+// (best-effort, never blocks the actual write) -- omit the field
+// entirely rather than emit a diff that would misleadingly read every
+// container as "added".
+export function withContainerChanges(
+  result: unknown,
+  before: ContainerIdentity[] | null,
+  after: ContainerIdentity[] | null,
+): unknown {
+  if (before === null || after === null) return result;
+  const containerChanges = diffContainerRecreation(before, after);
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), containerChanges };
+  }
+  return { result, containerChanges };
+}
+
 function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -802,6 +865,32 @@ export class PortainerClient {
     }
   }
 
+  // Best-effort snapshot of a stack's containers (name + id) for the
+  // before/after recreation diff. Returns null on any failure rather
+  // than throwing or returning [] -- [] is a real, meaningful state (a
+  // stack whose only service is profile-gated and never started), so it
+  // must stay distinguishable from "couldn't read the container list".
+  private async trySnapshotStackContainers(
+    endpointId: number,
+    stackName: string,
+  ): Promise<ContainerIdentity[] | null> {
+    try {
+      const containers = await this.listContainers(endpointId, {
+        label: `com.docker.compose.project=${stackName}`,
+        all: true,
+      });
+      if (!Array.isArray(containers)) return null;
+      return containers.map((c) => {
+        const o = c as Record<string, unknown>;
+        const names = Array.isArray(o.Names) ? o.Names : [];
+        const name = typeof names[0] === "string" ? names[0] : String(o.Id);
+        return { name, id: String(o.Id) };
+      });
+    } catch {
+      return null;
+    }
+  }
+
   async containerStart(
     endpointId: number,
     containerId: string,
@@ -929,6 +1018,10 @@ export class PortainerClient {
     opts: { pullImage: boolean; prune: boolean },
   ): Promise<unknown> {
     const stack = await this.assertFileBasedStack(stackId, "redeploy");
+    const before = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
     const file = await this.request<{ StackFileContent: string }>(
       "GET",
       `/api/stacks/${stackId}/file`,
@@ -948,7 +1041,15 @@ export class PortainerClient {
       },
     );
     const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
-    return withImagePrune(result, imagePrune);
+    const after = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
+    return withContainerChanges(
+      withImagePrune(result, imagePrune),
+      before,
+      after,
+    );
   }
 
   async updateStackFile(
@@ -957,6 +1058,10 @@ export class PortainerClient {
     opts: { pullImage: boolean; prune: boolean },
   ): Promise<unknown> {
     const stack = await this.assertFileBasedStack(stackId, "update");
+    const before = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
     const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}`,
@@ -969,7 +1074,15 @@ export class PortainerClient {
       },
     );
     const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
-    return withImagePrune(result, imagePrune);
+    const after = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
+    return withContainerChanges(
+      withImagePrune(result, imagePrune),
+      before,
+      after,
+    );
   }
 
   async redeployGitStack(
@@ -1032,6 +1145,10 @@ export class PortainerClient {
         payload.repositoryAuthorizationType = auth.AuthorizationType;
       }
     }
+    const before = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
     const result = await this.request(
       "PUT",
       `/api/stacks/${stackId}/git/redeploy`,
@@ -1039,7 +1156,15 @@ export class PortainerClient {
       payload,
     );
     const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
-    return withImagePrune(result, imagePrune);
+    const after = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
+    return withContainerChanges(
+      withImagePrune(result, imagePrune),
+      before,
+      after,
+    );
   }
 
   async recreateContainer(
@@ -1453,6 +1578,10 @@ export class PortainerClient {
         `Stack ${stackId} (${stack.Name}) has Type ${stack.Type}; set_stack_env supports only Compose (2) and Swarm (1).`,
       );
     }
+    const before = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
     // Normalize current env to lowercase {name, value} (Portainer returns
     // lowercase for /stacks endpoints — see scrubEnvArray for the same
     // dual-case handling).
@@ -1545,7 +1674,15 @@ export class PortainerClient {
             // itself already succeeded and is what matters.
           }
         }
-        return withEnvWarnings(result, warnings);
+        const after = await this.trySnapshotStackContainers(
+          stack.EndpointId,
+          stack.Name,
+        );
+        return withContainerChanges(
+          withEnvWarnings(result, warnings),
+          before,
+          after,
+        );
       } catch (err) {
         throw new Error(
           `Env change on git-managed stack ${stackId} (${stack.Name}) failed. ` +
@@ -1579,7 +1716,15 @@ export class PortainerClient {
         prune: false,
       },
     );
-    return withEnvWarnings(result, unreferencedWarnings(file.StackFileContent));
+    const after = await this.trySnapshotStackContainers(
+      stack.EndpointId,
+      stack.Name,
+    );
+    return withContainerChanges(
+      withEnvWarnings(result, unreferencedWarnings(file.StackFileContent)),
+      before,
+      after,
+    );
   }
 
   async deleteStack(stackId: number, confirmName: string): Promise<unknown> {
@@ -2218,7 +2363,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Stack",
       description:
-        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call.",
+        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call. Also appends `containerChanges`: a before/after diff of the stack's containers by name, each marked recreated/unchanged/added/removed — a 200 response only means Portainer accepted the call, not that anything actually changed (e.g. a compose file with no matching env references would redeploy the exact same config every time). Omitted if the container list couldn't be read before or after.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to redeploy"),
@@ -2254,7 +2399,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Update Stack File",
       description:
-        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response.",
+        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response. Same `containerChanges` before/after container diff too (recreated/unchanged/added/removed per container name) — a 200 response doesn't by itself confirm anything actually changed.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to update"),
@@ -2296,7 +2441,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Git Stack",
       description:
-        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up.",
+        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up. Also appends `containerChanges`: a before/after diff of the stack's containers by name (recreated/unchanged/added/removed) — confirms the pull actually landed rather than just that Portainer accepted the call.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to redeploy"),
@@ -2684,7 +2829,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Set / Remove Stack Env Variables",
       description:
-        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. If a `set` key isn't referenced anywhere in the compose file (no `${KEY}` or `$KEY`), the response includes an `envWarnings` array flagging it — Portainer will store the value, but nothing will read it until the compose file references it. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
+        "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. If a `set` key isn't referenced anywhere in the compose file (no `${KEY}` or `$KEY`), the response includes an `envWarnings` array flagging it — Portainer will store the value, but nothing will read it until the compose file references it. The response also includes `containerChanges`: a before/after diff of the stack's containers by name (recreated/unchanged/added/removed) — a 200 response only means Portainer accepted the call, not that the running container actually changed. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID"),

@@ -641,6 +641,28 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   client-side before the request. 10 new table-driven test cases
   (123 → 133 total). Still open: an optional server-side substring/
   regex filter, the narrower remaining piece of the original finding.
+- **`containerChanges` diff on all four redeploy-shaped write tools
+  (2026-08-28, same-day follow-up).** Answers the question a 200
+  response doesn't: did anything actually change? Snapshots the
+  stack's containers (name + id, via the existing
+  `com.docker.compose.project` label filter) immediately before and
+  after `portainer_redeploy_stack`, `portainer_update_stack_file`,
+  `portainer_redeploy_git_stack`, and `portainer_set_stack_env`
+  (both branches), then diffs by name into `recreated`/`unchanged`/
+  `added`/`removed` per container. This is the general-case fix for
+  the exact trap `envWarnings` catches the specific case of: the
+  2026-08-18 gluetun/VPN_TYPE incident where `set_stack_env` and
+  `redeploy_stack` both reported success while silently no-op'ing on
+  the live container, discovered only by manually diffing
+  `docker inspect` before/after. New pure helpers
+  `diffContainerRecreation` + `withContainerChanges` (mirrors the
+  `withImagePrune`/`withEnvWarnings` merge pattern), plus a private
+  best-effort `trySnapshotStackContainers` on `PortainerClient` — a
+  snapshot read failure returns `null` (distinct from a genuinely
+  empty `[]`, e.g. a stack whose only service is profile-gated and
+  never started) and the field is omitted entirely rather than risk a
+  misleading diff; never blocks the actual write either way. 11 new
+  table-driven test cases (133 → 144 total).
 
 ## Next
 
