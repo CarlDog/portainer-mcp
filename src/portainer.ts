@@ -728,6 +728,21 @@ export class PortainerClient {
     );
   }
 
+  async containerDelete(
+    endpointId: number,
+    containerId: string,
+    opts: { force?: boolean; removeVolumes?: boolean } = {},
+  ): Promise<unknown> {
+    const query: Record<string, string> = {};
+    if (opts.force) query.force = "true";
+    if (opts.removeVolumes) query.v = "true";
+    return this.request(
+      "DELETE",
+      `/api/endpoints/${endpointId}/docker/containers/${containerId}`,
+      Object.keys(query).length > 0 ? query : undefined,
+    );
+  }
+
   // Shared by file-based update endpoints. Reads the stack with
   // noRedact so the caller gets the raw env for round-trip, and
   // refuses git-managed or non-Compose/Swarm stacks (the file-based
@@ -1905,6 +1920,50 @@ export function registerPortainerTools(
         endpoint_id,
         container_id,
         signal: signal ?? "SIGKILL",
+      });
+    },
+  );
+
+  server.registerTool(
+    "portainer_container_delete",
+    {
+      title: "Portainer: Delete Container",
+      description:
+        "Delete a container. HIGH BLAST RADIUS AND IRREVERSIBLE — the container and its writable layer are gone. Anonymous (unnamed) volumes are removed only if remove_volumes=true; named volumes are never removed by this call. Docker refuses to delete a running container unless force=true, which kills it first (skipping graceful shutdown) then removes it. If the container belongs to a Portainer-managed stack, prefer portainer_delete_stack (or a redeploy) instead — deleting one container directly desyncs it from the stack record, and it may simply be recreated on the next redeploy.",
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          force: z
+            .boolean()
+            .optional()
+            .describe(
+              "Kill the container first if it's running (default false — Docker refuses to delete a running container otherwise)",
+            ),
+          remove_volumes: z
+            .boolean()
+            .optional()
+            .describe(
+              "Also remove anonymous volumes associated with the container (default false). Never removes named volumes.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the irreversible action",
+            ),
+        })
+        .strict(),
+    },
+    async ({ endpoint_id, container_id, force, remove_volumes }) => {
+      await p.containerDelete(endpoint_id, container_id, {
+        force,
+        removeVolumes: remove_volumes,
+      });
+      return asText({
+        ok: true,
+        action: "delete",
+        endpoint_id,
+        container_id,
       });
     },
   );
