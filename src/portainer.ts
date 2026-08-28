@@ -181,6 +181,93 @@ export function compactContainer(c: unknown): unknown {
   return out;
 }
 
+// Portainer's stacks endpoint has no server-side name filter (its only
+// documented filters are EndpointID/SwarmID — confirmed against the
+// pinned Swagger spec), so this is a client-side substring filter over
+// an already-fetched list, applied in the tool handler.
+export function filterStacksByName(stacks: unknown[], name: string): unknown[] {
+  const needle = name.toLowerCase();
+  return stacks.filter((s) => {
+    if (s === null || typeof s !== "object") return false;
+    const n = (s as Record<string, unknown>).Name;
+    return typeof n === "string" && n.toLowerCase().includes(needle);
+  });
+}
+
+// Compact projection for list output: a Stack object carries Env
+// (redacted array), GitConfig, Option, ResourceControl, and other detail
+// no summary view needs — full detail already lives in portainer_get_stack.
+// GitManaged is a derived boolean rather than echoing GitConfig itself,
+// which is redundant at summary granularity.
+export function compactStack(s: unknown): unknown {
+  if (s === null || typeof s !== "object" || Array.isArray(s)) return s;
+  const o = s as Record<string, unknown>;
+  return {
+    Id: o.Id,
+    Name: o.Name,
+    Type: o.Type,
+    EndpointId: o.EndpointId,
+    Status: o.Status,
+    CreationDate: o.CreationDate,
+    GitManaged: o.GitConfig != null,
+  };
+}
+
+// Compact projection for a single container's full Docker inspect JSON —
+// that response runs ~2-4 KB (NetworkSettings internals, GraphDriver,
+// HostnamePath/HostsPath/ResolvConfPath, ExecIDs, MountLabel,
+// AppArmorProfile, …) for detail a caller inspecting ONE container rarely
+// wants. Unlike compactContainer (a list-summary view), this keeps Env —
+// inspecting a single container is exactly when its config matters, and
+// redactSecrets already scrubs it regardless of nesting depth.
+export function compactContainerInspect(c: unknown): unknown {
+  if (c === null || typeof c !== "object" || Array.isArray(c)) return c;
+  const o = c as Record<string, unknown>;
+  const config = (o.Config ?? {}) as Record<string, unknown>;
+  const labels = (config.Labels ?? {}) as Record<string, unknown>;
+  const networkSettings = (o.NetworkSettings ?? {}) as Record<string, unknown>;
+  const mounts = Array.isArray(o.Mounts)
+    ? (o.Mounts as Record<string, unknown>[]).map((m) => ({
+        Source: m.Source,
+        Destination: m.Destination,
+        RW: m.RW,
+      }))
+    : [];
+  const out: Record<string, unknown> = {
+    Id: o.Id,
+    Name: o.Name,
+    Image: config.Image,
+    State: o.State,
+    Created: o.Created,
+    RestartCount: o.RestartCount,
+    Env: config.Env,
+    Ports: networkSettings.Ports,
+    Mounts: mounts,
+  };
+  const project = labels["com.docker.compose.project"];
+  if (project !== undefined) out.ComposeProject = project;
+  return out;
+}
+
+// Compact projection for endpoint list output: an Endpoint object's
+// Snapshots array embeds a full Docker system snapshot (all containers,
+// images, volumes at last sync) per endpoint — by far the largest field
+// and rarely what a caller wants from a list. Full detail isn't available
+// through any other current tool, so callers needing Snapshots use
+// full: true.
+export function compactEndpoint(e: unknown): unknown {
+  if (e === null || typeof e !== "object" || Array.isArray(e)) return e;
+  const o = e as Record<string, unknown>;
+  return {
+    Id: o.Id,
+    Name: o.Name,
+    Type: o.Type,
+    URL: o.URL,
+    Status: o.Status,
+    GroupId: o.GroupId,
+  };
+}
+
 export interface ImagePruneOptions {
   allUnused?: boolean;
 }
@@ -1359,10 +1446,23 @@ export function registerPortainerTools(
     {
       title: "Portainer: List Endpoints",
       description:
-        "List all Portainer environments (Docker hosts/Swarms registered with Portainer).",
-      inputSchema: z.object({}).strict(),
+        "List all Portainer environments (Docker hosts/Swarms registered with Portainer). Compact projection by default (Id, Name, Type, URL, Status, GroupId); set full=true for the raw objects, which include each endpoint's Snapshots — a full Docker system snapshot per endpoint, by far the largest field.",
+      inputSchema: z
+        .object({
+          full: z
+            .boolean()
+            .optional()
+            .describe(
+              "Return complete endpoint objects including Snapshots (default: compact projection)",
+            ),
+        })
+        .strict(),
     },
-    async () => asText(await p.listEndpoints()),
+    async ({ full }) => {
+      const result = await p.listEndpoints();
+      if (full || !Array.isArray(result)) return asText(result);
+      return asText(result.map(compactEndpoint));
+    },
   );
 
   server.registerTool(
@@ -1370,7 +1470,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: List Stacks",
       description:
-        "List all stacks managed by Portainer, optionally filtered by endpoint.",
+        "List all stacks managed by Portainer, optionally filtered by endpoint and/or name. Compact projection by default (Id, Name, Type, EndpointId, Status, CreationDate, GitManaged); set full=true for the raw objects. name is a client-side substring match (Portainer's stacks endpoint has no server-side name filter, unlike list_containers).",
       inputSchema: z
         .object({
           endpoint_id: z
@@ -1380,10 +1480,28 @@ export function registerPortainerTools(
             .describe(
               "Optional endpoint ID to filter stacks to a single Docker host",
             ),
+          name: z
+            .string()
+            .optional()
+            .describe("Filter: stack name substring (case-insensitive)"),
+          full: z
+            .boolean()
+            .optional()
+            .describe(
+              "Return complete stack objects (default: compact projection)",
+            ),
         })
         .strict(),
     },
-    async ({ endpoint_id }) => asText(await p.listStacks(endpoint_id)),
+    async ({ endpoint_id, name, full }) => {
+      const result = await p.listStacks(endpoint_id);
+      const filtered =
+        name && Array.isArray(result)
+          ? filterStacksByName(result, name)
+          : result;
+      if (full || !Array.isArray(filtered)) return asText(filtered);
+      return asText(filtered.map(compactStack));
+    },
   );
 
   server.registerTool(
@@ -1469,16 +1587,24 @@ export function registerPortainerTools(
     {
       title: "Portainer: Get Container",
       description:
-        "Get container details (state, config, networks, mounts) by ID or name.",
+        "Get container details (state, config, env, ports, mounts) by ID or name. Compact projection by default; set full=true for the complete Docker inspect JSON (NetworkSettings internals, GraphDriver, and other low-value detail the compact view omits).",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
           container_id: z.string().describe("Container ID or name"),
+          full: z
+            .boolean()
+            .optional()
+            .describe(
+              "Return the complete Docker inspect JSON (default: compact projection)",
+            ),
         })
         .strict(),
     },
-    async ({ endpoint_id, container_id }) =>
-      asText(await p.getContainer(endpoint_id, container_id)),
+    async ({ endpoint_id, container_id, full }) => {
+      const result = await p.getContainer(endpoint_id, container_id);
+      return asText(full ? result : compactContainerInspect(result));
+    },
   );
 
   server.registerTool(
