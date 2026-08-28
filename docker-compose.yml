@@ -13,7 +13,20 @@ services:
     ports:
       - "${HOST_PORT:-3004}:3000"
     environment:
+      # MCP_PORT/MCP_BIND_HOST are container-internal wiring, not operator
+      # config — MCP_BIND_HOST must be 0.0.0.0 for the port mapping above to
+      # work at all (see ~/.claude/rules/docker-deployments.md section 10).
       MCP_PORT: "3000"
+      MCP_BIND_HOST: "0.0.0.0"
+      # Host/Origin allowlist (DNS-rebinding defense — binding 0.0.0.0 is not
+      # itself a control inside a container). Restrictive default: any real
+      # client's hostname must be added here via Portainer's stack env, or
+      # requests get a 403. Startup logs the effective value either way.
+      MCP_ALLOWED_HOSTS: "${MCP_ALLOWED_HOSTS:-localhost}"
+      # Optional bearer token on top of the allowlist. Unset = auth disabled
+      # (the allowlist is still enforced); set via Portainer UI, never here.
+      MCP_AUTH_TOKEN: "${MCP_AUTH_TOKEN:-}"
+      MCP_SESSION_IDLE_MS: "${MCP_SESSION_IDLE_MS:-1800000}"
       PORTAINER_URL: "${PORTAINER_URL}"
       PORTAINER_API_KEY: "${PORTAINER_API_KEY}"
       PORTAINER_VERIFY_TLS: "${PORTAINER_VERIFY_TLS:-true}"

@@ -27,6 +27,12 @@ what's next.
 - `src/index.ts` — MCP server entry. Reads env vars at startup,
   decides transport based on `MCP_PORT`. Per-session `McpServer`
   instances via the `createServer()` factory.
+- `src/shared/http-transport.ts` — canonical fleet-wide HTTP transport
+  hardening (`mountMcpHttp`): bearer auth, Host/Origin allowlist,
+  idle-session eviction, spec-correct 404-on-unknown-session. Copied
+  near-verbatim from plex-mcp/kindroid-mcp's MCP-F03 template — see
+  "Transport modes" below and the file's own header comment before
+  editing it.
 - `src/portainer.ts` — `PortainerClient` (X-API-Key auth, optional
   insecure dispatcher for self-signed Portainer certs) +
   `registerPortainerTools`.
@@ -66,13 +72,45 @@ The same image supports two transports, selected at start time:
   MCP wire from stdin and writes to stdout. Standard mode for
   `docker run -i` invocation by an MCP client.
 - **HTTP (Streamable HTTP)** — used when `MCP_PORT` is set to a port
-  number. Server listens on `0.0.0.0:$MCP_PORT` with two endpoints:
-  - `POST/GET/DELETE /mcp` — MCP Streamable HTTP per spec; per-session
+  number. Server listens on `$MCP_BIND_HOST:$MCP_PORT` (default bind
+  `127.0.0.1`; `docker-compose.yml` sets `0.0.0.0`, required for the
+  published port to work at all) with two endpoints:
+  - `POST/GET/DELETE /mcp` — MCP Streamable HTTP per spec, mounted via
+    `mountMcpHttp()` in `src/shared/http-transport.ts`; per-session
     `mcp-session-id` header.
-  - `GET /health` — liveness probe (used by docker healthcheck).
+  - `GET /health` — liveness probe (used by docker healthcheck;
+    unauthenticated by design, same as every sibling MCP).
 
   Per-session `McpServer` instances via `createServer()`; the
   `PortainerClient` is module-scope (no per-session state).
+
+  **HTTP hardening (2026-08-28, closes both open phase-end-audit
+  findings at once).** `mountMcpHttp()` provides, in one place:
+  - **Host/Origin allowlist** (`MCP_ALLOWED_HOSTS`, comma-separated) —
+    the actual DNS-rebinding defense; binding `0.0.0.0` is not itself a
+    control inside a container (docker-deployments.md section 8). Unset
+    = open (any host); `docker-compose.yml` defaults to `localhost`-only,
+    so a real deployment must set this via Portainer's stack env or
+    every request 403s. A value that IS set but parses to zero usable
+    entries throws at startup rather than silently going open — see
+    `parseAllowedHosts()` in `src/index.ts`.
+  - **Bearer auth** (`MCP_AUTH_TOKEN`) — optional second layer on top of
+    the allowlist, constant-time-compared over SHA-256 digests. Unset =
+    no auth check, logged as a startup warning. Set via the Portainer
+    UI only — never as a tool input or committed value (same principle
+    as "Secrets in tool INPUTS" below).
+  - **Idle-session eviction** (`MCP_SESSION_IDLE_MS`, default 30 min) —
+    a periodic sweep closes sessions past the cutoff via
+    `transport.onclose`, the single removal path regardless of who
+    initiated the close.
+  - **Spec-correct 404 on an unknown/expired session id** (previously a
+    blanket 400) — the client's *only* defined signal (2025-06-18,
+    Session Management §3/§4) to re-initialize; a 400 reads as a generic
+    protocol error and leaves the client wedged until a human restarts
+    it. `test/http-transport.test.ts` enforces this directly.
+  - Graceful shutdown (`SIGTERM`/`SIGINT`) now disposes the sweep timer
+    and closes live sessions before exit — the old code had no shutdown
+    handling at all.
 
 ## Common Commands
 
@@ -96,7 +134,11 @@ docker build -t portainer-mcp .
   JSON-stringified text content block via `asText()`.
 - Auth via env vars `PORTAINER_URL` + `PORTAINER_API_KEY`. The
   container is stateless; the API key never lands on disk in the image.
-- HTTP mode has **no MCP auth** — bind only to private networks.
+- HTTP mode enforces a **Host/Origin allowlist** by default
+  (`MCP_ALLOWED_HOSTS`) and supports optional **bearer auth**
+  (`MCP_AUTH_TOKEN`) — see "Transport modes" above. Binding to a
+  private network is still good practice, but is no longer the only
+  control.
 - **Secrets in upstream responses are redacted before returning to
   MCP callers.** Portainer's `/api/stacks` and `/api/stacks/{id}` (and
   the Docker `inspect` proxy at

@@ -1,11 +1,9 @@
 #!/usr/bin/env node
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
-import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
-import { isInitializeRequest } from "@modelcontextprotocol/sdk/types.js";
-import { randomUUID } from "node:crypto";
 import express, { type Request, type Response } from "express";
 import { PortainerClient, registerPortainerTools } from "./portainer.js";
+import { mountMcpHttp } from "./shared/http-transport.js";
 
 const PORTAINER_URL = process.env.PORTAINER_URL;
 const PORTAINER_API_KEY = process.env.PORTAINER_API_KEY;
@@ -64,67 +62,86 @@ if (portStr && (port === null || Number.isNaN(port))) {
   process.exit(1);
 }
 
+/**
+ * Comma-separated allowlist backing a safety control. A value that IS set
+ * but parses to zero usable entries throws rather than yielding [] —
+ * hostAllowed() in shared/http-transport.ts treats an empty array as "not
+ * configured: open", so a typo that empties the list would otherwise
+ * silently disable the exact control it was meant to enable. Matching there
+ * is hostname-only (the Host header's port is split off, Origin's
+ * URL.hostname carries none), so a host:port entry could never match —
+ * strip one trailing :<digits> suffix per entry, but only when the
+ * remainder holds no other colon, so an IPv6 literal is never mangled into
+ * a different (still unmatchable) entry.
+ */
+function parseAllowedHosts(raw: string | undefined): string[] | undefined {
+  if (raw === undefined) return undefined;
+  const items = raw
+    .split(",")
+    .map((s) => s.trim())
+    .map((s) => s.replace(/^([^:]*):\d+$/, "$1"))
+    .filter(Boolean);
+  if (items.length === 0) {
+    throw new Error(
+      "MCP_ALLOWED_HOSTS is set but contains no usable entries. Leave it " +
+        "unset to allow any host, or an empty value would disable this " +
+        "safety control by accident.",
+    );
+  }
+  return items;
+}
+
 if (port) {
   // HTTP transport (long-lived server, e.g. for Portainer/Compose deployment).
+  const bindHost = process.env.MCP_BIND_HOST?.trim() || "127.0.0.1";
+  const allowedHosts = parseAllowedHosts(
+    process.env.MCP_ALLOWED_HOSTS?.trim() || undefined,
+  );
+  const authToken = process.env.MCP_AUTH_TOKEN?.trim() || undefined;
+
+  const rawSessionIdle = process.env.MCP_SESSION_IDLE_MS?.trim();
+  const sessionIdleMs = rawSessionIdle ? Number(rawSessionIdle) : 30 * 60_000;
+  if (!Number.isFinite(sessionIdleMs) || sessionIdleMs <= 0) {
+    console.error(
+      `MCP_SESSION_IDLE_MS must be a positive number (got: ${rawSessionIdle})`,
+    );
+    process.exit(1);
+  }
+
   const httpApp = express();
   httpApp.use(express.json());
 
-  const transports: Record<string, StreamableHTTPServerTransport> = {};
-
-  httpApp.all("/mcp", async (req: Request, res: Response) => {
-    try {
-      const sessionId = req.headers["mcp-session-id"] as string | undefined;
-      let transport: StreamableHTTPServerTransport;
-
-      if (sessionId && transports[sessionId]) {
-        transport = transports[sessionId];
-      } else if (
-        !sessionId &&
-        req.method === "POST" &&
-        isInitializeRequest(req.body)
-      ) {
-        transport = new StreamableHTTPServerTransport({
-          sessionIdGenerator: () => randomUUID(),
-          onsessioninitialized: (id) => {
-            transports[id] = transport;
-          },
-        });
-        transport.onclose = () => {
-          if (transport.sessionId) {
-            delete transports[transport.sessionId];
-          }
-        };
-        const server = createServer();
-        await server.connect(transport);
-      } else {
-        res.status(400).json({
-          jsonrpc: "2.0",
-          error: {
-            code: -32000,
-            message:
-              "Bad Request: missing or unknown session, or non-initialize POST",
-          },
-          id: null,
-        });
-        return;
-      }
-
-      await transport.handleRequest(req, res, req.body);
-    } catch (err) {
-      console.error("MCP request error:", err);
-      if (!res.headersSent) {
-        res.status(500).json({ error: "Internal server error" });
-      }
-    }
+  const mcp = mountMcpHttp(httpApp, "/mcp", {
+    createServer,
+    authToken,
+    allowedHosts,
+    sessionIdleMs,
   });
 
   httpApp.get("/health", (_req: Request, res: Response) => {
     res.json({ status: "ok", transport: "http", port });
   });
 
-  httpApp.listen(port, () => {
-    console.error(`portainer-mcp HTTP transport listening on :${port}`);
+  const httpServer = httpApp.listen(port, bindHost, () => {
+    console.error(
+      `portainer-mcp HTTP transport listening on ${bindHost}:${port} ` +
+        `(auth=${authToken ? "bearer" : "none"}, ` +
+        `allowed_hosts=${allowedHosts?.join(",") ?? "any"})`,
+    );
+    if (!authToken) {
+      console.error(
+        "portainer-mcp: MCP_AUTH_TOKEN is unset — the HTTP endpoint accepts unauthenticated requests",
+      );
+    }
   });
+
+  const shutdown = async (signal: string): Promise<void> => {
+    console.error(`portainer-mcp: shutting down (${signal})`);
+    await mcp.dispose();
+    httpServer.close(() => process.exit(0));
+  };
+  process.on("SIGTERM", () => void shutdown("SIGTERM"));
+  process.on("SIGINT", () => void shutdown("SIGINT"));
 } else {
   // Default: stdio transport (for direct invocation by MCP clients via `docker run -i`).
   const server = createServer();

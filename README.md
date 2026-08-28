@@ -73,6 +73,10 @@ itself, no separate call or schedule needed.
 | `PORTAINER_API_KEY` | yes | Generate in Portainer: *My Account → API Keys* |
 | `PORTAINER_VERIFY_TLS` | no | `false` to skip TLS verification (self-signed certs). Default `true`. |
 | `MCP_PORT` | no | Set to enable HTTP transport. Unset = stdio. |
+| `MCP_BIND_HOST` | no | HTTP transport bind address. Default `127.0.0.1`; `docker-compose.yml` sets `0.0.0.0` (required for the port mapping to work at all). |
+| `MCP_ALLOWED_HOSTS` | no | Comma-separated Host/Origin allowlist for the HTTP transport (DNS-rebinding defense). Unset = any host accepted. `docker-compose.yml` defaults to `localhost` — set it to your deployment host's real hostname(s) via Portainer's stack env, or real clients get a 403. |
+| `MCP_AUTH_TOKEN` | no | Bearer token required on the HTTP transport, on top of the host allowlist. Unset = no auth check (startup logs a warning). Set via the Portainer UI, not committed anywhere. |
+| `MCP_SESSION_IDLE_MS` | no | HTTP transport idle-session eviction cutoff, ms. Default `1800000` (30 min). |
 
 ## Transport modes
 
@@ -83,10 +87,15 @@ itself, no separate call or schedule needed.
 
 In HTTP mode the server exposes:
 - `POST/GET/DELETE /mcp` — MCP Streamable HTTP endpoint (per spec)
-- `GET /health` — liveness probe (used by docker healthcheck)
+- `GET /health` — liveness probe (used by docker healthcheck; unauthenticated by design)
 
-> HTTP mode currently has **no auth**. Bind only to a private network.
-> Don't expose to the public internet without adding a bearer token.
+HTTP mode enforces a **Host/Origin allowlist** (`MCP_ALLOWED_HOSTS`) by
+default in `docker-compose.yml` — binding `0.0.0.0` is not itself a
+control inside a container (DNS rebinding can still reach it), so the
+allowlist is the actual defense. **Bearer auth** (`MCP_AUTH_TOKEN`) is an
+optional second layer, off by default — add it via Portainer once you're
+ready. Idle HTTP sessions are evicted automatically after
+`MCP_SESSION_IDLE_MS`.
 
 ## Run with Docker (stdio, on demand)
 
@@ -121,7 +130,10 @@ The MCP endpoint will be at `http://<host>:${HOST_PORT}/mcp`.
 2. Repository URL: `https://github.com/CarlDog/portainer-mcp`
 3. Compose path: `docker-compose.yml`
 4. Environment variables: set `PORTAINER_URL`, `PORTAINER_API_KEY`,
-   optionally `PORTAINER_VERIFY_TLS`, `HOST_PORT`.
+   optionally `PORTAINER_VERIFY_TLS`, `HOST_PORT`. Also set
+   `MCP_ALLOWED_HOSTS` to the hostname(s) real clients will use to reach
+   this stack (the compose default is `localhost`-only) — and optionally
+   `MCP_AUTH_TOKEN` for bearer auth.
 5. Deploy. Healthcheck reaches green within ~10 seconds.
 
 > **Self-reference note:** if you deploy this on the same Portainer

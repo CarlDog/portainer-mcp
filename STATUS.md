@@ -1,6 +1,6 @@
 # Status
 
-**Last updated:** 2026-08-23
+**Last updated:** 2026-08-28
 
 ## Phase
 
@@ -501,6 +501,46 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   integration tests over mocking, which a deliberately-broken-git-
   credential fixture isn't worth building for this).
 
+- **HTTP transport hardened: bearer auth + Host allowlist + idle-session
+  eviction (2026-08-28), closing both open phase-end-audit findings from
+  2026-08-19 in one change.** Ported `src/shared/http-transport.ts`
+  near-verbatim from plex-mcp/kindroid-mcp's canonical MCP-F03 template
+  (only the logging calls adapted to this repo's plain `console.error`
+  convention — no logger module here). `mountMcpHttp()` replaces the
+  hand-rolled `/mcp` handler in `src/index.ts` and adds, in one place:
+  a Host/Origin allowlist (`MCP_ALLOWED_HOSTS`) as the real DNS-rebinding
+  defense (binding `0.0.0.0` is not itself a control inside a container —
+  docker-deployments.md section 8); optional bearer auth (`MCP_AUTH_TOKEN`,
+  constant-time SHA-256 digest compare) as a second layer; idle-session
+  eviction (`MCP_SESSION_IDLE_MS`, default 30 min) via a periodic sweep;
+  and graceful shutdown (`SIGTERM`/`SIGINT`) disposing the sweep and live
+  sessions, which the old code had none of. Free bonus bug fix: an
+  unknown/expired session id now answers the spec-required 404 instead
+  of a blanket 400 — the client's only defined signal (2025-06-18,
+  Session Management §3/§4) to re-initialize; the old 400 read as a
+  generic protocol error and left the client wedged until a human
+  restarted it. `test/http-transport.test.ts` (8 new cases, ported from
+  plex-companion's vitest suite to this repo's `node --test`) enforces
+  the 401/403/404 behaviors directly — 85/85 total. New `MCP_BIND_HOST`
+  env var (default `127.0.0.1`; `docker-compose.yml` sets `0.0.0.0`,
+  required wiring for the published port to work at all, matching
+  kindroid-mcp's Dockerfile/compose split).
+  **Rollout sequencing to avoid a self-inflicted lockout:** this
+  session's own `portainer` MCP connection is `http://carldog-nas:3004/mcp`
+  — a naive push would have 403'd it the moment the new image landed,
+  since `docker-compose.yml`'s restrictive default (`MCP_ALLOWED_HOSTS`
+  unset → compose substitutes `localhost`) doesn't match `carldog-nas`.
+  Confirmed with the user that `carldog-nas` is the only real caller of
+  `:3004`, then pre-staged `MCP_ALLOWED_HOSTS=carldog-nas` on the live
+  stack (179) via `portainer_set_stack_env` *before* pushing — inert
+  against the old code (which doesn't read that var), so no disruption,
+  and already in place by the time the new image lands via AutoUpdate's
+  5-minute git poll. `MCP_AUTH_TOKEN` deliberately left unset — that's a
+  secret, so per this repo's own credential-input design principle it's
+  the user's to add via the Portainer UI whenever they want bearer auth
+  on top of the allowlist; the allowlist alone is the immediate fix for
+  both audit findings. Package version bumped 0.5.0 → 0.6.0.
+
 ## Next
 
 - ~~Idea filed for future discussion (2026-08-05): a redacted-secret
@@ -521,35 +561,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   succeeded fully — new stack, git-managed, secrets retained via the
   env round-trip with zero manual UI re-entry, ground-truth verified
   via container inspect. The tool's core promise is now live-proven.
-- **[2026-08-19 phase-end audit] HIGH — HTTP transport has zero
-  authentication.** `/mcp` in `src/index.ts` has no bearer-token or
-  host-allowlist check, and `docker-compose.yml` wires neither
-  `MCP_AUTH_TOKEN` nor `MCP_ALLOWED_HOSTS`. Already flagged once
-  before — OC dogfooding memory 2026-08-06 (`828456fc`) named this the
-  *highest-priority* gap in a fleet-wide auth-hardening audit:
-  portainer-mcp is the one server where this is a genuine code+compose
-  gap (not just an unset operator value, as with botify-mcp/servarr-mcp
-  in that same audit), and it exposes the most destructive tool surface
-  in the fleet (delete_stack, container_kill, convert_stack_to_git —
-  the last of which caused a real outage this same session). 13 days
-  later at audit time, still unaddressed, and three feature ships in
-  between (image prune, git_credential_id, compare_env_values) didn't
-  touch it. The README's "no auth, bind privately" note is honest but
-  isn't a fix — per docker-deployments.md #8, network binding alone
-  doesn't stop DNS rebinding from a browser on the host. **Recommended
-  fix:** port the MCP-F03 bearer-auth + host-allowlist pattern that
-  plex-companion and kindroid-mcp already implement. Queue as its own
-  stage — not an audit-pass quick fix.
-- **[2026-08-19 phase-end audit] MEDIUM — no idle-session eviction on
-  the HTTP transport.** The `transports` session map in `src/index.ts`
-  is only cleaned up via `transport.onclose` (client-initiated
-  teardown) — mcp-server-authoring.md flags this as unreliable for
-  long-lived per-session servers. No TTL sweep exists, unlike
-  plex-companion's `MCP_SESSION_IDLE_MS` pattern (same fleet, same
-  transport shape). Low practical urgency today — this container gets
-  redeployed often enough in practice (self-redeploys, AutoUpdate
-  polling) that the map likely never accumulates much — but worth
-  porting the sibling pattern over for correctness.
+- ~~[2026-08-19 phase-end audit] HIGH — HTTP transport has zero
+  authentication.~~ **Resolved 2026-08-28** — see Done above
+  (`src/shared/http-transport.ts`). Host/Origin allowlist is the actual
+  fix (bearer auth is an optional second layer, off by default).
+- ~~[2026-08-19 phase-end audit] MEDIUM — no idle-session eviction on
+  the HTTP transport.~~ **Resolved 2026-08-28** — see Done above, same
+  change (`mountMcpHttp()`'s periodic sweep, `MCP_SESSION_IDLE_MS`).
 - **[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is 2090
   lines.** CLAUDE.md's own documented refactor trigger for pulling
   tool registrations into `src/tools/<name>.ts` — "a tool that does
