@@ -571,10 +571,10 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   One real snag: Claude Desktop was running at the time of the first
   edit and silently flushed its own in-memory config back to disk,
   clobbering the change (caught via file-mtime comparison, not assumed);
-  fully quitting the app before reapplying fixed it. **Still pending:**
-  `claude mcp remove portainer -s user` + re-add with the bearer header
-  — this workstation's own registration, saved for last since it's this
-  session's own tool access and mid-task removal would sever it.
+  fully quitting the app before reapplying fixed it. This workstation's
+  own Claude Code registration (`~/.claude.json`) was updated too —
+  confirmed live in this same continued session, whose `portainer` MCP
+  connection is already carrying the bearer header.
 - **Dogfooding backlog closed: 7 `mcp-feedback` OC memories, 12
   findings, v0.6.0 → v0.7.0 (2026-08-28).** Triggered by the
   `mcp-dogfooding.md` closing-the-loop practice — surfaced the
