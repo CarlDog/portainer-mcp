@@ -952,30 +952,72 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 ## Next
 
 - **TypeScript 5.9.3 → 7.0.2 (part of Dependabot PR #11) is deliberately
-  deferred, not just deprioritized (researched 2026-08-28).** TS7 is
-  Microsoft's Go-native compiler rewrite ("tsgo"/Corsa) — the compiler
-  itself is a clean, zero-source-change swap for this repo (empirically
-  verified: `tsc --noEmit` against this repo's actual `src/` and
-  unmodified `tsconfig.json`, 0 errors), but two independent things
-  hard-block it today, confirmed empirically rather than assumed:
-  `typescript-eslint` (devDependency, peer range `>=4.8.4 <6.1.0`) not
-  only fails to install against TS7, its own runtime guard actively
-  refuses to run ("typescript-eslint does not support TS 7.0" —
-  [tracked issue](https://github.com/typescript-eslint/typescript-eslint/issues/10940),
-  open, no committed timeline, described by maintainers as real
-  architecture work not a quick peer-range edit); and the Docker
-  build's `npm ci` layer would fail at dependency resolution before
-  `tsc` is ever invoked, for the same reason. A workaround exists (a
-  dual-alias devDependency split — `typescript-eslint` pinned to an
-  official `@typescript/typescript6` compat package, the real TS7
-  compiler installed under a second aliased name) and was verified to
-  `npm install` cleanly, but is explicitly transitional by Microsoft's
-  own framing, has an unresolved cross-platform binary-invocation
-  question (Windows dev machine vs. the alpine Docker image pull
-  different platform-specific optional-dependency binaries), and buys
-  a compiler speed win this repo's build times don't need urgently
-  enough to justify the complexity. Left pinned on TypeScript 5.x;
-  revisit once the linked `typescript-eslint` issue closes.
+  deferred, not just deprioritized (researched 2026-08-28).**
+
+  **THE GATE — the one condition that unblocks this, and nothing else:**
+  [`typescript-eslint/typescript-eslint#10940`](https://github.com/typescript-eslint/typescript-eslint/issues/10940)
+  must ship a released version of `typescript-eslint` whose
+  `peerDependencies.typescript` range includes `7.x`. As of 2026-08-28
+  that issue is open, untriaged into a milestone, and its own
+  maintainers describe the work as a real architecture change (ESLint's
+  synchronous parser model vs. TS7's async Go/WASM native compiler),
+  not a one-line peer-range edit — so don't expect it to close quickly
+  once TS 7.1 ships its stable API; those are two independent gates and
+  *this* one is the binding constraint. **To re-check whether the gate
+  has cleared:** `npm view typescript-eslint peerDependencies` — the
+  day that range includes `7.x` (currently `>=4.8.4 <6.1.0`), both
+  `typescript` and `typescript-eslint` can be bumped together in one
+  PR. Don't re-derive this from scratch; this line is the whole check.
+
+  **Why not just silence Dependabot on it** (`ignore:` in
+  `dependabot.yml` for `typescript`'s major-version updates, scoped to
+  not affect legitimate 5.x patch/minor bumps) — considered and
+  explicitly declined 2026-08-28. The PR recreating weekly is a feature
+  here, not noise: it's the visible, unmissable reminder that something
+  is still blocked, and an `ignore` rule has no self-expiry — nothing
+  would prompt anyone to come back and remove it the day the gate above
+  clears, so the suppression would likely outlive its own justification
+  silently. Reasoning at the time: "the cure is worse than the
+  disease." If this ever becomes real week-over-week noise (rather than
+  a once-and-done decision to keep deferring), revisit the `ignore:`
+  option then — the syntax is documented, just not applied:
+  `ignore: [{dependency-name: "typescript", update-types:
+  ["version-update:semver-major"]}]`.
+
+  **The rest of the research, for full context:** TS7 is Microsoft's
+  Go-native compiler rewrite ("tsgo"/Corsa) — the compiler itself is a
+  clean, zero-source-change swap for this repo (empirically verified:
+  `tsc --noEmit` against this repo's actual `src/` and unmodified
+  `tsconfig.json`, 0 errors). It's blocked by two things that both
+  trace back to the same root cause (the gate above), confirmed
+  empirically rather than assumed: `typescript-eslint`'s current peer
+  range not only fails to `npm install` against TS7, its own runtime
+  guard actively refuses to run ("typescript-eslint does not support TS
+  7.0" — confirmed by force-installing TS7 and running `eslint` for
+  real); and the Docker build's `npm ci` layer would fail at dependency
+  resolution before `tsc` is ever invoked, for the identical reason. A
+  workaround exists (a dual-alias devDependency split —
+  `typescript-eslint` pinned to an official `@typescript/typescript6`
+  compat package, the real TS7 compiler installed under a second
+  aliased name) and was verified to `npm install` cleanly, but is
+  explicitly transitional by Microsoft's own framing, has an unresolved
+  cross-platform binary-invocation question (Windows dev machine vs.
+  the alpine Docker image pull different platform-specific
+  optional-dependency binaries), and buys a compiler speed win this
+  repo's build times don't need urgently enough to justify the
+  complexity. Left pinned on TypeScript 5.x.
+
+  **Dependabot PR #11's actual current state:** originally proposed 4
+  majors in one group (express, undici, zod, typescript). zod, undici,
+  and express have all since been merged separately as scoped manual
+  bumps (see Done above) — only typescript remains genuinely blocked.
+  The PR itself still shows all 4 in its diff until Dependabot
+  regenerates it against the new `package.json`/lockfile state (which
+  happens automatically on its next scheduled run, or immediately if
+  someone pushes to its branch); don't be alarmed if it briefly still
+  lists already-merged packages.
+
+- ~~Idea filed for future discussion (2026-08-05): a redacted-secret
   fingerprint tool.~~ **Shipped 2026-08-19 as `portainer_compare_env_values`**
   — see Done above for the full writeup, including the design
   discussion around a store-hash-at-write-time alternative that was
