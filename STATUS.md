@@ -1,6 +1,14 @@
 # Status
 
-**Last updated:** 2026-08-28
+**Last updated:** 2026-08-28 — **released v0.6.0**, this repo's first tagged
+release, under the new fleet standard UNI-19. Three things landed with it:
+the backfilled `CHANGELOG.md` UNI-12 requires; `flavor: latest=false` on the
+publish workflow so a release tag no longer republishes `:latest`; and a real
+bug fix — `package.json` read 0.6.0 while `src/index.ts` hardcoded `"0.1.0"`,
+so the MCP initialize response had been reporting 0.1.0 to every client across
+five minor versions. The version is now a single const in
+`src/shared/version.ts` with `test/version-sync.test.ts` asserting it matches
+the manifest (MCP-T03), so the two cannot drift again.
 
 ## Phase
 

@@ -56,6 +56,14 @@ jobs:
         uses: docker/metadata-action@v6
         with:
           images: ${{ env.REGISTRY }}/${{ env.IMAGE_NAME }}
+          # UNI-19: a release must not move a mutable deployment tag. `flavor`
+          # defaults to latest=auto, which applies :latest on ANY type=semver
+          # event -- independently of the type=raw rule below, whose
+          # is_default_branch is correctly false on a tag push. Left at the
+          # default, `git push origin v1.2.3` republishes :latest from a second
+          # build of the same commit, at a different digest, and bounces every
+          # stack watching that tag.
+          flavor: latest=false
           tags: |
             type=ref,event=branch
             type=ref,event=pr

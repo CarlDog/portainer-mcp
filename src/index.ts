@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import express, { type Request, type Response } from "express";
 import { PortainerClient, registerPortainerTools } from "./portainer.js";
 import { mountMcpHttp } from "./shared/http-transport.js";
+import { SERVER_VERSION } from "./shared/version.js";
 
 const PORTAINER_URL = process.env.PORTAINER_URL;
 const PORTAINER_API_KEY = process.env.PORTAINER_API_KEY;
@@ -41,7 +42,7 @@ function createServer(): McpServer {
   const server = new McpServer(
     {
       name: "portainer-mcp",
-      version: "0.1.0",
+      version: SERVER_VERSION,
     },
     {
       instructions: INSTRUCTIONS,
