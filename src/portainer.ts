@@ -1081,6 +1081,8 @@ export class PortainerClient {
       username?: string;
       password?: string;
       gitCredentialId?: number;
+      autoUpdateInterval?: string;
+      forcePullImage?: boolean;
     },
   ): Promise<unknown> {
     if (
@@ -1133,6 +1135,19 @@ export class PortainerClient {
       body.RepositoryUsername = spec.username ?? "";
       body.RepositoryPassword = spec.password ?? "";
     }
+    // AutoUpdateSettings per the pinned Swagger spec (JobID/Webhook are
+    // server-assigned, never sent by us). Only set when an interval is
+    // given — ForcePullImage alone has nothing to attach to without a
+    // poll interval. Confirmed no Registries field exists anywhere on
+    // this endpoint's payload (composeStackFromGitRepositoryPayload):
+    // AutoUpdate here is image-pull-only, no registry-credential wiring
+    // is available through this call.
+    if (spec.autoUpdateInterval) {
+      body.AutoUpdate = {
+        Interval: spec.autoUpdateInterval,
+        ForcePullImage: spec.forcePullImage ?? false,
+      };
+    }
     return this.request(
       "POST",
       "/api/stacks/create/standalone/repository",
@@ -1150,6 +1165,8 @@ export class PortainerClient {
       username?: string;
       password?: string;
       gitCredentialId?: number;
+      autoUpdateInterval?: string;
+      forcePullImage?: boolean;
       confirmName: string;
     },
   ): Promise<unknown> {
@@ -1246,6 +1263,8 @@ export class PortainerClient {
         username: spec.username,
         password: spec.password,
         gitCredentialId: spec.gitCredentialId,
+        autoUpdateInterval: spec.autoUpdateInterval,
+        forcePullImage: spec.forcePullImage,
       });
     } catch (createErr) {
       // Recovery payload — env keys only (NEVER values; we don't want
@@ -2390,6 +2409,18 @@ export function registerPortainerTools(
             .describe(
               "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
             ),
+          auto_update_interval: z
+            .string()
+            .optional()
+            .describe(
+              'Enables Portainer\'s periodic git-poll auto-redeploy at this interval (Go duration string, e.g. "5m", "1h"). Omit to leave AutoUpdate disabled — the stack only redeploys when portainer_redeploy_git_stack is called.',
+            ),
+          force_pull_image: z
+            .boolean()
+            .optional()
+            .describe(
+              "With auto_update_interval set, also re-pull the image on every poll even if the git ref is unchanged (default false). Ignored if auto_update_interval is omitted.",
+            ),
           confirm: z
             .literal(true)
             .describe(
@@ -2408,6 +2439,8 @@ export function registerPortainerTools(
       username,
       password,
       git_credential_id,
+      auto_update_interval,
+      force_pull_image,
     }) =>
       asText(
         await p.createGitStack(endpoint_id, {
@@ -2419,6 +2452,8 @@ export function registerPortainerTools(
           username,
           password,
           gitCredentialId: git_credential_id,
+          autoUpdateInterval: auto_update_interval,
+          forcePullImage: force_pull_image,
         }),
       ),
   );
@@ -2472,6 +2507,18 @@ export function registerPortainerTools(
             .describe(
               "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
             ),
+          auto_update_interval: z
+            .string()
+            .optional()
+            .describe(
+              'Enables Portainer\'s periodic git-poll auto-redeploy at this interval (Go duration string, e.g. "5m", "1h") on the new stack. Omit to leave AutoUpdate disabled.',
+            ),
+          force_pull_image: z
+            .boolean()
+            .optional()
+            .describe(
+              "With auto_update_interval set, also re-pull the image on every poll even if the git ref is unchanged (default false). Ignored if auto_update_interval is omitted.",
+            ),
           confirm_name: z
             .string()
             .min(1)
@@ -2494,6 +2541,8 @@ export function registerPortainerTools(
       username,
       password,
       git_credential_id,
+      auto_update_interval,
+      force_pull_image,
       confirm_name,
     }) =>
       asText(
@@ -2504,6 +2553,8 @@ export function registerPortainerTools(
           username,
           password,
           gitCredentialId: git_credential_id,
+          autoUpdateInterval: auto_update_interval,
+          forcePullImage: force_pull_image,
           confirmName: confirm_name,
         }),
       ),
