@@ -13,6 +13,18 @@ rather than after the fact.
 
 ## [Unreleased]
 
+### Changed
+
+- **Package renamed to `@carldog/portainer-mcp`.** The unscoped name
+  `portainer-mcp` was still free, but three fleet repos had already lost
+  theirs to unrelated packages; a scope is reserved to the account, so no
+  name inside it can be taken. Nothing is published to npm - this ships as a
+  container - so the rename is invisible to consumers; `package-lock.json`
+  was regenerated with it.
+- **`package.json` is now `private: true`.** It makes the config honest
+  (there is no publish workflow and no `NPM_TOKEN`) and makes an accidental
+  `npm publish` fail instead of succeeding.
+
 ## [0.6.0] - 2026-08-28
 
 First tagged release. Deployed and verified on the NAS, serving live stack
