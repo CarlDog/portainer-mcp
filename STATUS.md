@@ -852,7 +852,31 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 
 ## Next
 
-- ~~Idea filed for future discussion (2026-08-05): a redacted-secret
+- **TypeScript 5.9.3 → 7.0.2 (part of Dependabot PR #11) is deliberately
+  deferred, not just deprioritized (researched 2026-08-28).** TS7 is
+  Microsoft's Go-native compiler rewrite ("tsgo"/Corsa) — the compiler
+  itself is a clean, zero-source-change swap for this repo (empirically
+  verified: `tsc --noEmit` against this repo's actual `src/` and
+  unmodified `tsconfig.json`, 0 errors), but two independent things
+  hard-block it today, confirmed empirically rather than assumed:
+  `typescript-eslint` (devDependency, peer range `>=4.8.4 <6.1.0`) not
+  only fails to install against TS7, its own runtime guard actively
+  refuses to run ("typescript-eslint does not support TS 7.0" —
+  [tracked issue](https://github.com/typescript-eslint/typescript-eslint/issues/10940),
+  open, no committed timeline, described by maintainers as real
+  architecture work not a quick peer-range edit); and the Docker
+  build's `npm ci` layer would fail at dependency resolution before
+  `tsc` is ever invoked, for the same reason. A workaround exists (a
+  dual-alias devDependency split — `typescript-eslint` pinned to an
+  official `@typescript/typescript6` compat package, the real TS7
+  compiler installed under a second aliased name) and was verified to
+  `npm install` cleanly, but is explicitly transitional by Microsoft's
+  own framing, has an unresolved cross-platform binary-invocation
+  question (Windows dev machine vs. the alpine Docker image pull
+  different platform-specific optional-dependency binaries), and buys
+  a compiler speed win this repo's build times don't need urgently
+  enough to justify the complexity. Left pinned on TypeScript 5.x;
+  revisit once the linked `typescript-eslint` issue closes.
   fingerprint tool.~~ **Shipped 2026-08-19 as `portainer_compare_env_values`**
   — see Done above for the full writeup, including the design
   discussion around a store-hash-at-write-time alternative that was
