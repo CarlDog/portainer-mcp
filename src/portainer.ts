@@ -377,6 +377,48 @@ export function compareEnvValuesResult(
   return { match, a: sideA, b: sideB };
 }
 
+// Docker multiplexes a non-TTY container's log stream into frames: a
+// 1-byte stream type (0=stdin, 1=stdout, 2=stderr) + 3 zero-padding
+// bytes + a 4-byte big-endian payload length, repeated once per write.
+// A TTY-attached container's stream carries NO such framing -- just raw
+// terminal bytes. Demuxing must run on the raw response BYTES (see the
+// `raw: true` request() branch) rather than an already-UTF-8-decoded
+// string: any payload over 127 bytes puts a byte >= 0x80 in the length
+// field, which UTF-8 decoding would have already mangled into U+FFFD
+// before this function ever saw it.
+//
+// Rather than an extra inspect call to check Config.Tty, validate that
+// the buffer parses as a complete, gapless sequence of valid frames; if
+// it doesn't (a declared length would overrun the buffer, or a type
+// byte is out of range), treat the whole buffer as unframed (TTY) text
+// instead. A genuine TTY stream essentially never coincidentally
+// satisfies "every single frame boundary lines up" for its entire
+// length, so this false-positives only in the deliberately-adversarial
+// case, never on real log output.
+export function demuxDockerLogs(buf: Buffer): string {
+  const chunks: Buffer[] = [];
+  let offset = 0;
+  while (offset < buf.length) {
+    if (offset + 8 > buf.length) return buf.toString("utf8");
+    const streamType = buf.readUInt8(offset);
+    if (
+      streamType > 2 ||
+      buf.readUInt8(offset + 1) !== 0 ||
+      buf.readUInt8(offset + 2) !== 0 ||
+      buf.readUInt8(offset + 3) !== 0
+    ) {
+      return buf.toString("utf8");
+    }
+    const length = buf.readUInt32BE(offset + 4);
+    const payloadStart = offset + 8;
+    const payloadEnd = payloadStart + length;
+    if (payloadEnd > buf.length) return buf.toString("utf8");
+    chunks.push(buf.subarray(payloadStart, payloadEnd));
+    offset = payloadEnd;
+  }
+  return Buffer.concat(chunks).toString("utf8");
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -393,7 +435,7 @@ export class PortainerClient {
     path: string,
     query?: Record<string, string>,
     body?: unknown,
-    opts?: { noRedact?: boolean },
+    opts?: { noRedact?: boolean; raw?: boolean },
   ): Promise<T> {
     const url = new URL(path, this.config.url);
     if (query) {
@@ -441,6 +483,13 @@ export class PortainerClient {
       throw new Error(
         `Portainer ${status} for ${method} ${path}: ${errBody.slice(0, 200)}`,
       );
+    }
+    // Raw-bytes branch, bypassing both the JSON and text branches below.
+    // Exists for containerLogs' demuxer, which must see Docker's stream
+    // frame headers before any text decoding touches them -- decoding to
+    // UTF-8 first would corrupt any length byte >= 0x80 into U+FFFD.
+    if (opts?.raw) {
+      return Buffer.from(await res.body.arrayBuffer()) as unknown as T;
     }
     const ctypeHeader = res.headers["content-type"];
     const ctype = Array.isArray(ctypeHeader)
@@ -573,11 +622,14 @@ export class PortainerClient {
       tail: String(tail),
       timestamps: "true",
     };
-    return this.request<string>(
+    const raw = await this.request<Buffer>(
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/${containerId}/logs`,
       query,
+      undefined,
+      { raw: true },
     );
+    return demuxDockerLogs(raw);
   }
 
   async systemStatus(): Promise<unknown> {
@@ -1716,7 +1768,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Container Logs",
       description:
-        "Fetch the tail of a container's logs (raw output, may include Docker stream multiplexing prefixes for non-TTY containers).",
+        "Fetch the tail of a container's logs, timestamped, as clean newline-delimited text. Docker's stream-multiplexing frame headers (present on non-TTY containers) are stripped server-side before the result is returned.",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
