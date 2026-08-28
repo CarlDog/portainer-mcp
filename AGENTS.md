@@ -126,6 +126,18 @@ docker build -t portainer-mcp .
 
 ## Conventions
 
+- **`package.json` is `@carldog/portainer-mcp` and `private: true` — both
+  deliberate.** The unscoped name `portainer-mcp` was still free, but three
+  fleet repos lost theirs to unrelated packages before anyone thought to
+  check; a scope is reserved to the account, so no name inside it can be
+  taken. Nothing here publishes to npm: this ships as a container
+  (`ghcr.io/carldog/portainer-mcp`), there is no publish workflow and no
+  `NPM_TOKEN`, and `private: true` blocks an accidental publish while `bin`
+  + `files` advertise a publishable shape. If npx distribution is ever
+  wanted, drop the flag and add `"publishConfig": {"access": "public"}` —
+  scoped packages default to private, so a first publish without it fails
+  with a 402.
+
 - All logging goes to **stderr** (`console.error`). stdout is the MCP
   wire protocol — writing to it corrupts the transport.
 - Tool names: `portainer_<verb_noun>` (e.g. `portainer_list_stacks`).
@@ -273,13 +285,27 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-26 tools registered in `src/portainer.ts` — 11 read tools (endpoints,
-stacks, containers, logs, volumes, images, system status, env-value
-comparison) and 15 write tools (container start/stop/restart/kill/
-recreate; stack create/update/env/redeploy/git-convert/delete; git
-auth; image prune). The v1 "read-only initial scope" is history — see
-STATUS.md for the authoritative per-tool chronology and the README for
-the current tool table.
+30 tools registered in `src/portainer.ts` — 13 read tools (endpoints,
+stacks, containers, logs, volumes, networks, images, system status,
+env-value comparison) and 17 write tools (container start/stop/restart/
+kill/delete/recreate; stack create/update/env/redeploy/git-convert/
+delete; git auth; image and network prune). The v1 "read-only initial
+scope" is history — see STATUS.md for the authoritative per-tool
+chronology and the README for the current tool table.
+
+**All 30 tool `inputSchema`s enforce `.strict()`** — an unknown or
+misspelled input key is rejected with a clear "unrecognized key" error
+at the MCP validation layer instead of being silently stripped (zod's
+default raw-shape behavior) and surfacing later as a confusing
+"required field missing" error. Verified through a real client/server
+round-trip (not just source-reading) that this SDK version accepts a
+full `z.object({...}).strict()` in place of a raw shape for
+`inputSchema`, and that both the advertised JSON schema
+(`additionalProperties: false`) and runtime parsing honor it — unlike
+object-level `.refine()`/`.superRefine()`, which mcp-server-authoring.md
+documents as silently dropped by the same mechanism (a `.strict()`
+ZodObject still exposes `.shape`, which is what the SDK's schema
+normalizer keys off; a `.refine()` wrapper's `ZodEffects` doesn't).
 
 Write tools have real blast radius (`portainer_delete_stack` removes a
 stack and all its containers; `portainer_container_kill` is SIGKILL).
@@ -315,9 +341,12 @@ See STATUS.md for the live-verified details.
 
 ## Testing
 
-- `npm test` — `node --test` (via tsx) over `test/*.test.ts`.
-  Currently `test/redact.test.ts`: table-driven unit tests for the
-  `redactSecrets` scrubber (pure function, no mocking involved).
+- `npm test` — `node --test` (via tsx) over `test/*.test.ts`. One file
+  per pure-function area (`redact`, `containers`, `env-compare`,
+  `images`, `http-transport`, `env-warnings`, `compact-projections`,
+  `demux-logs`, `transport`, `version-sync`) — table-driven unit tests
+  against pure functions extracted from the client/tool layer, no
+  mocking involved.
 - For anything that talks to Portainer, prefer integration tests
   against a real instance behind env-gated tests (don't mock — see
   working-style note about mocked-vs-real divergence).

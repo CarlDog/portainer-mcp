@@ -1,11 +1,20 @@
 # Status
 
-**Last updated:** 2026-08-28 — **released v0.6.0**, this repo's first tagged
-release, under the new fleet standard UNI-19. Three things landed with it:
-the backfilled `CHANGELOG.md` UNI-12 requires; `flavor: latest=false` on the
-publish workflow so a release tag no longer republishes `:latest`; and a real
-bug fix — `package.json` read 0.6.0 while `src/index.ts` hardcoded `"0.1.0"`,
-so the MCP initialize response had been reporting 0.1.0 to every client across
+**Last updated:** 2026-08-28 — **v0.7.0**, closing 7 accumulated
+`mcp-feedback` OpenChronicle memories (the dogfooding backlog) in one pass.
+Tool count 26 → 30: `portainer_container_delete`, `portainer_list_networks`,
+`portainer_inspect_network`, `portainer_prune_networks` are new; every
+existing tool got at least a schema/description touch (`.strict()` on all
+30, compact-by-default on three list/get tools, `get_stack` finally returns
+`StackFileContent`, `container_logs` returns clean demuxed text). See Done
+below for the full breakdown.
+
+Previously: **v0.6.0**, this repo's first tagged release, under the new
+fleet standard UNI-19. Three things landed with it: the backfilled
+`CHANGELOG.md` UNI-12 requires; `flavor: latest=false` on the publish
+workflow so a release tag no longer republishes `:latest`; and a real bug
+fix — `package.json` read 0.6.0 while `src/index.ts` hardcoded `"0.1.0"`, so
+the MCP initialize response had been reporting 0.1.0 to every client across
 five minor versions. The version is now a single const in
 `src/shared/version.ts` with `test/version-sync.test.ts` asserting it matches
 the manifest (MCP-T03), so the two cannot drift again.
@@ -534,13 +543,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   required wiring for the published port to work at all, matching
   kindroid-mcp's Dockerfile/compose split).
   **Rollout sequencing to avoid a self-inflicted lockout:** this
-  session's own `portainer` MCP connection is `http://carldog-nas:3004/mcp`
+  session's own `portainer` MCP connection is `http://your-nas:3004/mcp`
   — a naive push would have 403'd it the moment the new image landed,
   since `docker-compose.yml`'s restrictive default (`MCP_ALLOWED_HOSTS`
-  unset → compose substitutes `localhost`) doesn't match `carldog-nas`.
-  Confirmed with the user that `carldog-nas` is the only real caller of
-  `:3004`, then pre-staged `MCP_ALLOWED_HOSTS=carldog-nas` on the live
-  stack (179) via `portainer_set_stack_env` *before* pushing — inert
+  unset → compose substitutes `localhost`) doesn't match the real NAS
+  hostname. Confirmed with the user that the NAS is the only real caller
+  of `:3004`, then pre-staged `MCP_ALLOWED_HOSTS=<nas-hostname>` on the
+  live stack (179) via `portainer_set_stack_env` *before* pushing — inert
   against the old code (which doesn't read that var), so no disruption,
   and already in place by the time the new image lands via AutoUpdate's
   5-minute git poll. `MCP_AUTH_TOKEN` deliberately left unset — that's a
@@ -548,6 +557,78 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   the user's to add via the Portainer UI whenever they want bearer auth
   on top of the allowlist; the allowlist alone is the immediate fix for
   both audit findings. Package version bumped 0.5.0 → 0.6.0.
+- **`MCP_AUTH_TOKEN` set on the live stack (179), local client configs
+  updated to match (2026-08-28).** Following up on the allowlist-only
+  rollout above: the user generated a token and set it via the
+  Portainer UI (never seen or handled by this session — same boundary
+  as every other credential in this codebase). Every local MCP client
+  config pointing at `:3004` was updated with an `Authorization: Bearer`
+  header — Claude Desktop (`mcp-remote --header`), VS Code (native
+  `headers` + a `promptString` input so the token is entered once,
+  securely, rather than committed to the config file), and Codex CLI
+  (`[mcp_servers.portainer.http_headers]`) — mirroring the exact pattern
+  each config already used for sibling MCPs (botify, filesystem, etc.).
+  One real snag: Claude Desktop was running at the time of the first
+  edit and silently flushed its own in-memory config back to disk,
+  clobbering the change (caught via file-mtime comparison, not assumed);
+  fully quitting the app before reapplying fixed it. **Still pending:**
+  `claude mcp remove portainer -s user` + re-add with the bearer header
+  — this workstation's own registration, saved for last since it's this
+  session's own tool access and mid-task removal would sever it.
+- **Dogfooding backlog closed: 7 `mcp-feedback` OC memories, 12
+  findings, v0.6.0 → v0.7.0 (2026-08-28).** Triggered by the
+  `mcp-dogfooding.md` closing-the-loop practice — surfaced the
+  accumulated friction notes, user chose "everything, right now."
+  Landed as 9 separate commits (per explicit instruction to keep
+  logical groups separable), each independently typecheck/lint/format/
+  test-clean before commit. Tool count 26 → 30; test count 87 → 123
+  (baseline had already grown to 87 by the time this pass started, from
+  concurrent HTTP-transport-hardening work — see the git-race note
+  below). Highlights (full detail in each commit message):
+  - `portainer_get_stack` now actually returns `StackFileContent` by
+    default (`include_file=false` to skip it), fixing an "accepted and
+    does nothing" gap between the tool's description and its
+    implementation. Fails soft with `StackFileError` rather than
+    silently omitting the field on a fetch error.
+  - `portainer_set_stack_env` warns (`envWarnings` on the response) when
+    a `set` key isn't referenced anywhere in the compose file — was a
+    silent no-op before.
+  - `portainer_list_endpoints`, `portainer_list_stacks`, and
+    `portainer_get_container` are now compact-by-default
+    (`full=true` opts into raw objects), matching
+    `portainer_list_containers`'s existing 2026-07-30 pattern.
+    `list_stacks` also gained a client-side `name` filter (Portainer's
+    `/stacks` endpoint has no server-side one — confirmed against the
+    pinned spec).
+  - All 30 tool `inputSchema`s enforce `.strict()` — spiked against a
+    real client/server round-trip first (not just source-reading)
+    before committing to it across every tool, since
+    mcp-server-authoring.md documents a sibling trap
+    (`.refine()`/`.superRefine()` silently dropped by the same
+    mechanism). Applied via a one-off TS-compiler-based script for
+    byte-precision across 2000+ lines rather than 26 hand edits.
+  - New tools: `portainer_container_delete`,
+    `portainer_list_networks`/`_inspect_network`/`_prune_networks`.
+  - `portainer_container_logs` demuxes Docker's stream-multiplexing
+    frame headers server-side — see the Known Gaps entry above for why
+    this had to operate on raw response bytes, not a decoded string.
+  - `auto_update_interval`/`force_pull_image` on `create_git_stack` +
+    `convert_stack_to_git` (confirmed no `Registries` field exists on
+    this endpoint at all, per the pinned spec — image-poll-only, not a
+    scope choice).
+  - Error-body truncation cap 200 → 2000 chars;
+    `recreate_container`'s description now documents its
+    client-timeout-doesn't-mean-failure risk honestly.
+  - **A concurrent session pushed to `main` mid-task** (`be2285b`,
+    restoring the canonical pre-commit hook's author-identity check) —
+    and its diff happened to also carry a byte-identical, independently
+    derived fix for `get_stack`'s `id`→`stack_id` rename +
+    `StackFileContent` fetch (bundled in, most likely accidentally, via
+    a `git commit -a`/`-A` sweeping up unrelated uncommitted WIP). No
+    real conflict — content matched exactly — but every commit from
+    that point on was preceded by a `git fetch` + log check before
+    pushing, to catch any further races early. Worth knowing: this repo
+    can have more than one active Claude session at a time.
 
 ## Next
 
@@ -576,23 +657,23 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 - ~~[2026-08-19 phase-end audit] MEDIUM — no idle-session eviction on
   the HTTP transport.~~ **Resolved 2026-08-28** — see Done above, same
   change (`mountMcpHttp()`'s periodic sweep, `MCP_SESSION_IDLE_MS`).
-- **[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is 2090
-  lines.** CLAUDE.md's own documented refactor trigger for pulling
-  tool registrations into `src/tools/<name>.ts` — "a tool that does
-  non-trivial composition of multiple API calls" — may have just been
-  crossed by `portainer_compare_env_values` (fetches two containers,
-  hashes, compares). Not urgent: the file stays cleanly organized
-  (pure functions, then the client class, then tool registrations),
-  nothing is actually broken. Worth revisiting whether the deferred
-  split is due now that a second orchestration-shaped tool exists
-  alongside `compareEnvValues`.
-- **Clean up `portainer_container_logs` output + add filtering.**
-  Now a proven pain point (2026-06-03, see Known Gaps): demux the
-  Docker 8-byte frame headers → newline-delimited text, and expose
-  `since`/`until`/`timestamps` + an optional server-side substring
-  filter so callers can bound the payload under token limits.
-  Highest-value read-tool improvement — surfaced while reading
-  wobblebot's daemon logs from another session.
+- **[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is now 2700
+  lines** (was 2090; the dogfooding backlog below added ~600 more).
+  CLAUDE.md's own documented refactor trigger for pulling tool
+  registrations into `src/tools/<name>.ts` was already arguably crossed
+  by `portainer_compare_env_values`; four more tools and several new
+  pure helpers later, the file is still cleanly organized (pure
+  functions, then the client class, then tool registrations) but the
+  case for splitting is stronger than it was. Still not urgent — queue
+  as its own stage with proper planning if it's picked up, not a
+  silent "while I'm in here" split.
+- ~~Clean up `portainer_container_logs` output.~~ **Demuxing done
+  2026-08-28** — Docker's 8-byte stream-multiplexing frame headers are
+  now stripped server-side, returning clean newline-delimited text (see
+  Done below). **Still open:** `since`/`until` and an optional
+  server-side substring filter, so callers can bound the payload
+  without fetching the full tail first — that half of the original
+  2026-06-03 finding wasn't in this pass's scope.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
@@ -790,35 +871,29 @@ None active. Decisions made during scaffolding:
   `tail` ≥ ~250 lines and had to be spilled to a temp file and
   re-parsed; (2) line-based chunking is impossible because there are
   no real newlines. Improvements worth developing:
-  - **Demultiplex + clean the stream.** Strip the 8-byte frame
-    headers (`header[0]` = stream type, `header[4:8]` = big-endian
-    payload length) and return clean newline-delimited UTF-8. A TTY
-    container's stream isn't framed — detect (inspect `Config.Tty`)
-    and pass through.
-  - **Add server-side filtering to bound the payload.** Docker's logs
-    endpoint natively supports `since` / `until` (RFC3339 or relative)
-    and `timestamps`; expose those, plus an optional substring/regex
-    `grep` filter applied server-side. Lets a caller pull "just the
-    last 10 min" or "only lines matching `grid fill`" instead of a
-    giant tail — the real fix for the token-limit hit.
-- **`portainer_list_containers` dumps raw full objects for ALL
-  containers — token-limit pain on a busy host (2026-06-04).**
-  `listContainers` (`src/portainer.ts`) passes Docker's
-  `/api/endpoints/{id}/docker/containers/json` response straight through
-  `asText()` with no projection and no filter — each element is the full
-  container object (NetworkSettings, Mounts, HostConfig, Labels, Ports,
-  Command, …). On the NAS (47 containers) the result is ~169 KB /
-  4,592 lines; it blew the caller's token limit during a wobblebot soak
-  check-in and had to be spilled to a temp file + filtered client-side to
-  find the 8 `wobblebot-*` daemons. The `all` flag is the only knob today.
-  Two improvements (mirrored in Next):
-  - **Expose Docker's native `filters`** (name / status / label), exactly
-    as `portainer_list_volumes` already does (dangling / name) —
-    `?filters={"name":["wobblebot"]}` filters server-side; the real fix.
-  - **Compact projection by default** — `Id` / `Names` / `Image` /
-    `State` / `Status` / `Created` per container, opt-in `full` for the
-    raw objects (full detail already lives in `portainer_get_container`).
-    Cuts the payload ~50× even without a filter.
+  - ~~**Demultiplex + clean the stream.**~~ **Done 2026-08-28** —
+    `demuxDockerLogs` strips the 8-byte frame headers and returns clean
+    newline-delimited UTF-8, operating on the raw response bytes (not an
+    already-decoded string, which would corrupt any length byte ≥ 0x80
+    for payloads ≥128 bytes). No inspect-Config.Tty call needed: an
+    unframed (TTY) stream is detected by failing to parse as a complete,
+    gapless sequence of valid frames, falling back to raw text. See Done
+    below.
+  - **Still open: server-side filtering to bound the payload.** Docker's
+    logs endpoint natively supports `since` / `until` (RFC3339 or
+    relative); expose those, plus an optional substring/regex `grep`
+    filter applied server-side. Lets a caller pull "just the last
+    10 min" or "only lines matching `grid fill`" instead of a giant
+    tail — the remaining fix for the token-limit hit on very large
+    tails.
+- ~~`portainer_list_containers` dumps raw full objects for ALL
+  containers — token-limit pain on a busy host (2026-06-04).~~
+  **Resolved 2026-07-30** — server-side `filters` (name/label/status)
+  and a compact-by-default projection shipped together; see the Done
+  entry below. This Known Gaps note should have been struck through
+  then and wasn't — caught during the 2026-08-28 dogfooding pass while
+  applying the identical fix to `list_endpoints`/`list_stacks`/
+  `get_container`.
 - API key from `.env` is the only auth path. For multi-Portainer setups
   this would need to be revisited, but single-instance is the v1 target.
 - ~~Stack `Webhook` field leaked in plaintext.~~ Resolved 2026-08-19:

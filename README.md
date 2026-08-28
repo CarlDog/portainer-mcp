@@ -17,10 +17,12 @@ Sister to [`plex-mcp`](https://github.com/CarlDog/plex-mcp),
 
 ## Tools
 
-26 tools: 11 read tools plus 15 write tools with real side effects
+30 tools: 13 read tools plus 17 write tools with real side effects
 (container lifecycle, stack create/update/redeploy/delete). Secrets in
 Portainer/Docker responses are redacted client-side before reaching MCP
 callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
+All input schemas enforce `.strict()` — an unknown or misspelled param
+name is rejected with a clear error rather than silently dropped.
 
 The four redeploy/recreate tools (`portainer_redeploy_stack`,
 `portainer_update_stack_file`, `portainer_redeploy_git_stack`,
@@ -33,15 +35,17 @@ itself, no separate call or schedule needed.
 
 | Tool | Description |
 | --- | --- |
-| `portainer_list_endpoints` | List all Portainer environments (Docker hosts/Swarms) |
-| `portainer_list_stacks` | List stacks (optionally filtered by endpoint) |
-| `portainer_get_stack` | Stack details (compose, env, status) by ID |
+| `portainer_list_endpoints` | List all Portainer environments (compact by default; full=true for raw JSON including per-endpoint Snapshots) |
+| `portainer_list_stacks` | List stacks (compact by default; endpoint/name filters; full=true for raw JSON) |
+| `portainer_get_stack` | Stack details by ID, including compose file content (`include_file=false` to skip it) |
 | `portainer_list_containers` | List containers (compact by default; name/label/status filters; full=true for raw JSON) |
-| `portainer_get_container` | Container details (state, config, networks, mounts) |
+| `portainer_get_container` | Container details (state, config, env, ports, mounts); compact by default, full=true for raw inspect JSON |
 | `portainer_compare_env_values` | Check whether two containers' env values are equal, without exposing either one |
-| `portainer_container_logs` | Tail of container logs (1-5000 lines) |
+| `portainer_container_logs` | Tail of container logs (1-5000 lines), demuxed to clean newline-delimited text |
 | `portainer_list_volumes` | List Docker volumes in an endpoint |
 | `portainer_inspect_volume` | Volume details by name |
+| `portainer_list_networks` | List Docker networks in an endpoint |
+| `portainer_inspect_network` | Network details by ID/name |
 | `portainer_list_images` | List Docker images in an endpoint, with per-image usage info |
 | `portainer_system_status` | Portainer version + system info |
 
@@ -53,17 +57,19 @@ itself, no separate call or schedule needed.
 | `portainer_container_stop` | Gracefully stop a container |
 | `portainer_container_restart` | Restart a container |
 | `portainer_container_kill` | SIGKILL a container (not graceful) |
+| `portainer_container_delete` | Delete a container (irreversible; force=true to delete a running one) |
 | `portainer_recreate_container` | Recreate a container (optionally re-pull image); auto-prunes dangling images after |
 | `portainer_create_stack` | Create a new compose stack from a file body |
-| `portainer_create_git_stack` | Create a git-managed stack from a repository |
+| `portainer_create_git_stack` | Create a git-managed stack from a repository; optional AutoUpdate polling |
 | `portainer_update_stack_file` | Replace a stack's compose file content; auto-prunes dangling images after |
-| `portainer_set_stack_env` | Set/update a stack's environment variables |
+| `portainer_set_stack_env` | Set/update a stack's environment variables; warns if a set key isn't referenced in the compose file |
 | `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes); auto-prunes dangling images after |
 | `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack; auto-prunes dangling images after |
-| `portainer_convert_stack_to_git` | Convert a file-based stack to git-managed |
+| `portainer_convert_stack_to_git` | Convert a file-based stack to git-managed; optional AutoUpdate polling |
 | `portainer_set_git_auth` | Update git credentials on a git-managed stack |
 | `portainer_delete_stack` | Delete a stack and all its containers |
 | `portainer_prune_images` | Bulk-delete unused images (dangling-only by default, or all-unused) |
+| `portainer_prune_networks` | Remove all Docker networks not used by any container |
 
 ## Configuration
 
@@ -191,4 +197,6 @@ PORTAINER_URL=... PORTAINER_API_KEY=... PORTAINER_VERIFY_TLS=false npm run dev
 - A `.githooks/pre-commit` runs gitleaks (secrets) and a PII pattern
   check (user-home paths, personal-domain emails). Activate it once
   per clone: `git config core.hooksPath .githooks`.
-- HTTP transport has no auth — bind to private networks only.
+- HTTP transport enforces a Host/Origin allowlist (`MCP_ALLOWED_HOSTS`) by
+  default, with optional bearer auth (`MCP_AUTH_TOKEN`) as a second layer —
+  see "Transport modes" above.
