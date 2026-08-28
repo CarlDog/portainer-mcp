@@ -34,8 +34,13 @@ what's next.
   "Transport modes" below and the file's own header comment before
   editing it.
 - `src/portainer.ts` — `PortainerClient` (X-API-Key auth, optional
-  insecure dispatcher for self-signed Portainer certs) +
-  `registerPortainerTools`.
+  insecure dispatcher for self-signed Portainer certs), the shared pure
+  helper functions (redaction, compaction, diffing, warnings), and the
+  thin `registerPortainerTools` orchestrator that delegates to
+  `src/tools/*.ts`.
+- `src/tools/` — MCP tool registrations, one file per Portainer
+  resource: `stacks.ts`, `containers.ts`, `images.ts`, `networks.ts`,
+  `volumes.ts`, `system.ts`. See "Tool registration layout" below.
 - `src/util.ts` — `asText()` helper.
 - `Dockerfile` — multi-stage build (alpine, non-root user).
 - `docker-compose.yml` — Compose/Portainer deployment using HTTP transport.
@@ -46,23 +51,38 @@ what's next.
   the deployed Portainer version. Refresh when Portainer is upgraded
   on the NAS (process documented in `PORTAINER-API.md`).
 
-## When to add a `tools/` layer
+## Tool registration layout
 
-Today the structure is flat: `src/portainer.ts` holds the API client
-and the MCP tool registrations. That's idiomatic when each tool is a
-thin wrapper over a single Portainer API call.
+**Split by resource (2026-08-28).** `src/portainer.ts` had grown to
+~3000 lines (pure helpers + `PortainerClient` + 31 inline tool
+registrations); the file-size finding from the 2026-08-19 phase-end
+audit was the trigger. All 31 `server.registerTool(...)` calls moved
+into six `src/tools/<resource>.ts` files — `stacks.ts` (11 tools,
+~590 lines), `containers.ts` (10, ~385), `images.ts` (3, ~75),
+`networks.ts` (3, ~80), `volumes.ts` (2, ~60), `system.ts` (2, ~45).
+Each exports a single `register<Resource>Tools(server, p)`, called
+from `registerPortainerTools` in `src/portainer.ts` — that function is
+now a thin orchestrator, not a 1200-line body. `PortainerClient`, the
+pure helper functions (`redactSecrets`, `compactStack`,
+`withEnvWarnings`, etc.), and `registerPortainerTools` itself all stay
+in `src/portainer.ts` — both the client and the pure helpers are
+shared across every `src/tools/*.ts` file, so moving them would invert
+the dependency direction (tools depend on the client, never the
+reverse). `src/index.ts` is unaffected; `registerPortainerTools`'s
+name, signature, and location didn't change.
 
-**Trigger to refactor:** the first tool that doesn't fit cleanly inline.
-Concretely:
+`stacks.ts` runs over the ~300-400 line soft cap from
+phase-end-audit.md, but it's one logical concern (stack lifecycle)
+sharing the GET→mutate→PUT round-trip pattern across every write tool
+— legitimate cohesion, not a junk drawer, so it wasn't split further.
 
-- A tool that **orchestrates across multiple Portainer resources** —
-  e.g. "redeploy all stacks whose images are stale" (list stacks +
-  inspect each + redeploy). That doesn't belong inside the client.
-- A tool that does **non-trivial composition** of multiple API calls —
-  filtering, ranking, cross-referencing.
-
-When that arrives, pull tool registrations out into
-`src/tools/<descriptive-name>.ts`. Don't pre-split.
+**Next trigger, if it arrives:** a tool that orchestrates across
+multiple Portainer resources (e.g. "redeploy all stacks whose images
+are stale" — list stacks + inspect each + redeploy) or does non-trivial
+cross-resource composition doesn't belong in any single
+`src/tools/<resource>.ts` file or in `PortainerClient` — that's when a
+`src/tools/orchestration.ts` (or similar) becomes the next addition.
+Don't pre-split for it.
 
 ## Transport modes
 

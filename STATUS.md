@@ -752,16 +752,26 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 - ~~[2026-08-19 phase-end audit] MEDIUM — no idle-session eviction on
   the HTTP transport.~~ **Resolved 2026-08-28** — see Done above, same
   change (`mountMcpHttp()`'s periodic sweep, `MCP_SESSION_IDLE_MS`).
-- **[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is now 2700
-  lines** (was 2090; the dogfooding backlog below added ~600 more).
-  CLAUDE.md's own documented refactor trigger for pulling tool
-  registrations into `src/tools/<name>.ts` was already arguably crossed
-  by `portainer_compare_env_values`; four more tools and several new
-  pure helpers later, the file is still cleanly organized (pure
-  functions, then the client class, then tool registrations) but the
-  case for splitting is stronger than it was. Still not urgent — queue
-  as its own stage with proper planning if it's picked up, not a
-  silent "while I'm in here" split.
+- ~~[2026-08-19 phase-end audit] LOW — `src/portainer.ts` is now 2700
+  lines.~~ **Resolved 2026-08-28.** Grew to ~3030 lines by the time
+  this was picked up (the same-day since/until, containerChanges,
+  pruneWarning, and pull_image work added more on top of the 2700
+  noted here). Per this entry's own instruction, queued as a proper
+  planning step rather than a silent split: proposed a 6-file grouping
+  by resource to the user, got explicit go-ahead, then executed as 6
+  separate mechanical commits (one per file), each verified with
+  typecheck/lint/format/test/build plus a real MCP client/server
+  `tools/list` round-trip before committing. Result: `src/portainer.ts`
+  down to 1877 lines (pure helpers + `PortainerClient` + a thin
+  `registerPortainerTools` orchestrator — its actual identity per
+  CLAUDE.md), all 31 tool registrations now live in
+  `src/tools/{stacks,containers,images,networks,volumes,system}.ts`.
+  Final smoke test confirmed all 31 tools present with zero
+  missing/extra, and a schema spot-check on `redeploy_stack` confirmed
+  `.strict()` (`additionalProperties: false`) and `required` fields
+  survived the move byte-for-byte. See CLAUDE.md "Tool registration
+  layout" for the breakdown and the next trigger (a cross-resource
+  orchestration tool).
 - ~~Clean up `portainer_container_logs` output + add `since`/`until`.~~
   **Fully done 2026-08-28** — demuxing landed first (see Done below);
   `since`/`until` followed the same day, accepting a Unix timestamp,
