@@ -663,6 +663,30 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   never started) and the field is omitted entirely rather than risk a
   misleading diff; never blocks the actual write either way. 11 new
   table-driven test cases (133 → 144 total).
+- **Investigated a `remove_orphans` flag for
+  `portainer_update_stack_file`/`portainer_redeploy_stack`
+  (2026-08-28) — not buildable as envisioned; shipped a `pruneWarning`
+  instead.** Motivated by an OC dogfooding memory: a kometa-runonce
+  profile-gated container survived repeated redeploys of a Compose
+  stack. Checked the pinned spec before writing code (per
+  api-integration.md — verify upstream behavior, don't assume): `PUT
+  /api/stacks/{id}` and `.../git/redeploy`'s only orphan-adjacent
+  field, `Prune`, is documented by Portainer's own Swagger as "only
+  available for Swarm stacks." There is no server-side
+  `--remove-orphans` equivalent reachable for Compose stacks (Type 2 —
+  the common single-host case) through this endpoint at all, so the
+  flag can't be built as asked. What shipped instead: the three
+  stack-write methods already send `prune` unconditionally (correct —
+  it IS the right field for Swarm), but now attach a `pruneWarning`
+  field to the response (new pure helpers `pruneNoopWarning` +
+  `withPruneWarning`, same merge pattern as `withEnvWarnings`) whenever
+  `prune: true` is requested against a non-Swarm stack, so a caller no
+  longer gets silent false-success. Tool descriptions and
+  `docs/PORTAINER-API.md` (new "`Prune` on stack update/redeploy is
+  Swarm-only" gotcha) both spell out the Compose limitation and the
+  manual workaround (`portainer_list_containers` label filter +
+  `portainer_container_delete`). 7 new table-driven test cases
+  (144 → 151 total).
 
 ## Next
 
@@ -824,6 +848,19 @@ None active. Decisions made during scaffolding:
   flip private and redeploy. Same caveat as other tools that
   accept secrets in input: the `password` parameter is visible in
   tool-call logs, so use a scoped read-only PAT.
+- **No way to auto-remove orphaned containers from a Compose stack on
+  redeploy — a hard Portainer API limitation, not a gap in our tool.**
+  `PUT /api/stacks/{id}` and `.../git/redeploy`'s `Prune` field is
+  Swarm-only per Portainer's own Swagger spec; there is no
+  `docker compose up --remove-orphans` equivalent for Compose stacks
+  (Type 2) reachable through either endpoint. Investigated 2026-08-28
+  (see Done above and `docs/PORTAINER-API.md` "`Prune` on stack
+  update/redeploy is Swarm-only"); the redeploy/update-stack tools now
+  emit a `pruneWarning` when `prune: true` is requested on a Compose
+  stack rather than silently no-op'ing. The only removal path for a
+  Compose-stack orphan is manual: `portainer_list_containers` (label
+  `com.docker.compose.project=<stack name>`, `all: true`) to find it,
+  `portainer_container_delete` to remove it.
 - **`portainer_convert_stack_to_git` doesn't clean up orphan
   containers from a failed create.** When the create-from-git step
   fails after the source stack has already been deleted, Portainer's

@@ -397,6 +397,40 @@ export function withEnvWarnings(result: unknown, warnings: string[]): unknown {
   return { result, envWarnings: warnings };
 }
 
+// Portainer's `Prune` field on PUT /stacks/{id} and .../git/redeploy only
+// takes effect for Swarm stacks (Type 1) -- its own Swagger description says
+// "only available for Swarm stacks". Sending prune: true against a Compose
+// stack (Type 2) is accepted and silently does nothing, so a caller believing
+// it removes orphaned containers from a Compose stack is silently wrong.
+export function pruneNoopWarning(
+  stackType: number,
+  pruneRequested: boolean,
+): string | null {
+  if (!pruneRequested || stackType === 1) return null;
+  return (
+    "prune: true has no effect on this stack -- Portainer's Prune option " +
+    "only applies to Swarm stacks (Type 1), not Compose (Type 2). Orphaned " +
+    "containers from services removed or profile-gated out of the compose " +
+    "file are not cleaned up automatically. To find and remove them: " +
+    "portainer_list_containers with label=com.docker.compose.project=<stack " +
+    "name> and all=true, then portainer_container_delete on any that no " +
+    "longer belong."
+  );
+}
+
+// Merges an advisory prune-no-op warning onto a response without clobbering
+// it -- same additive pattern as withEnvWarnings/withImagePrune.
+export function withPruneWarning(
+  result: unknown,
+  warning: string | null,
+): unknown {
+  if (warning === null) return result;
+  if (result !== null && typeof result === "object" && !Array.isArray(result)) {
+    return { ...(result as Record<string, unknown>), pruneWarning: warning };
+  }
+  return { result, pruneWarning: warning };
+}
+
 export interface EnvSideRaw {
   found: boolean;
   value: string;
@@ -1046,7 +1080,10 @@ export class PortainerClient {
       stack.Name,
     );
     return withContainerChanges(
-      withImagePrune(result, imagePrune),
+      withPruneWarning(
+        withImagePrune(result, imagePrune),
+        pruneNoopWarning(stack.Type, opts.prune),
+      ),
       before,
       after,
     );
@@ -1079,7 +1116,10 @@ export class PortainerClient {
       stack.Name,
     );
     return withContainerChanges(
-      withImagePrune(result, imagePrune),
+      withPruneWarning(
+        withImagePrune(result, imagePrune),
+        pruneNoopWarning(stack.Type, opts.prune),
+      ),
       before,
       after,
     );
@@ -1134,6 +1174,7 @@ export class PortainerClient {
       prune: opts.prune ?? stack.Option?.Prune ?? false,
       repositoryAuthentication: auth != null,
     };
+    const effectivePrune = payload.prune as boolean;
     if (auth != null) {
       // Saved password is preserved on the server side when password is
       // empty AND existing GitConfig.Authentication is set, per the handler.
@@ -1161,7 +1202,10 @@ export class PortainerClient {
       stack.Name,
     );
     return withContainerChanges(
-      withImagePrune(result, imagePrune),
+      withPruneWarning(
+        withImagePrune(result, imagePrune),
+        pruneNoopWarning(stack.Type, effectivePrune),
+      ),
       before,
       after,
     );
@@ -2363,7 +2407,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Stack",
       description:
-        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call. Also appends `containerChanges`: a before/after diff of the stack's containers by name, each marked recreated/unchanged/added/removed — a 200 response only means Portainer accepted the call, not that anything actually changed (e.g. a compose file with no matching env references would redeploy the exact same config every time). Omitted if the container list couldn't be read before or after.",
+        "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call. Also appends `containerChanges`: a before/after diff of the stack's containers by name, each marked recreated/unchanged/added/removed — a 200 response only means Portainer accepted the call, not that anything actually changed (e.g. a compose file with no matching env references would redeploy the exact same config every time). Omitted if the container list couldn't be read before or after. If `prune: true` was requested on a Compose-type stack, the response also carries `pruneWarning` — Portainer's Prune option only works for Swarm stacks and silently no-ops on Compose.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to redeploy"),
@@ -2375,7 +2419,7 @@ export function registerPortainerTools(
             .boolean()
             .optional()
             .describe(
-              "Remove containers for services no longer in the compose (default false)",
+              "Remove containers for services no longer in the compose (default false). Swarm stacks only -- Portainer's own API restricts this to Swarm (Type 1); on a Compose stack (Type 2, the common case) it is silently ignored server-side, and the response carries a `pruneWarning` field when that happens. For Compose stacks, find and remove orphaned containers manually via portainer_list_containers + portainer_container_delete.",
             ),
           confirm: z
             .literal(true)
@@ -2399,7 +2443,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Update Stack File",
       description:
-        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response. Same `containerChanges` before/after container diff too (recreated/unchanged/added/removed per container name) — a 200 response doesn't by itself confirm anything actually changed.",
+        "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response. Same `containerChanges` before/after container diff too (recreated/unchanged/added/removed per container name) — a 200 response doesn't by itself confirm anything actually changed. Same `pruneWarning` behavior as portainer_redeploy_stack when `prune: true` is requested on a Compose-type stack.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to update"),
@@ -2417,7 +2461,7 @@ export function registerPortainerTools(
             .boolean()
             .optional()
             .describe(
-              "Remove containers for services no longer in the compose (default false)",
+              "Remove containers for services no longer in the compose (default false). Swarm stacks only -- Portainer's own API restricts this to Swarm (Type 1); on a Compose stack (Type 2, the common case) it is silently ignored server-side, and the response carries a `pruneWarning` field when that happens. For Compose stacks, find and remove orphaned containers manually via portainer_list_containers + portainer_container_delete.",
             ),
           confirm: z
             .literal(true)
@@ -2441,7 +2485,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Redeploy Git Stack",
       description:
-        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up. Also appends `containerChanges`: a before/after diff of the stack's containers by name (recreated/unchanged/added/removed) — confirms the pull actually landed rather than just that Portainer accepted the call.",
+        "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up. Also appends `containerChanges`: a before/after diff of the stack's containers by name (recreated/unchanged/added/removed) — confirms the pull actually landed rather than just that Portainer accepted the call. Same `pruneWarning` behavior as portainer_redeploy_stack when the effective prune value is true on a Compose-type stack.",
       inputSchema: z
         .object({
           stack_id: z.number().int().describe("Stack ID to redeploy"),
@@ -2453,7 +2497,7 @@ export function registerPortainerTools(
             .boolean()
             .optional()
             .describe(
-              "Remove containers for services no longer in the compose. Default: preserve the stack's existing setting (false if never set).",
+              "Remove containers for services no longer in the compose. Default: preserve the stack's existing setting (false if never set). Swarm stacks only -- Portainer's own API restricts this to Swarm (Type 1); on a Compose stack (Type 2, the common case) it is silently ignored server-side, and the response carries a `pruneWarning` field when that happens. For Compose stacks, find and remove orphaned containers manually via portainer_list_containers + portainer_container_delete.",
             ),
           confirm: z
             .literal(true)

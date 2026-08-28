@@ -461,6 +461,41 @@ spell this out.
 `pullImage` flags are unconditionally `true`. Compose start does not
 pull unless the image is missing. Document the asymmetry.
 
+### `Prune` on stack update/redeploy is Swarm-only — no orphan-removal path for Compose
+
+`PUT /api/stacks/{id}` and `PUT /api/stacks/{id}/git/redeploy` both accept
+a `Prune` field, and the Swagger description says outright: "Prune
+services that are no longer referenced (**only available for Swarm
+stacks**)". Confirmed against `stacks.updateSwarmStackPayload` in the
+pinned spec (`docs/specs/portainer.json`).
+
+Practical effect: sending `prune: true` against a **Compose** stack
+(Type 2 — the common case for a single-host/NAS deployment) is accepted
+by the API and silently does nothing. There is no equivalent of
+`docker compose up --remove-orphans` reachable through this endpoint for
+Compose stacks — a container whose service was removed or is
+profile-gated out of the current compose file survives every redeploy
+indefinitely unless removed by hand.
+
+Investigated 2026-08-28 while scoping a `remove_orphans` flag requested
+by an OC dogfooding memory (a kometa-runonce profile-gated container
+surviving repeated redeploys). Conclusion: the flag can't be built as
+envisioned because Portainer's own API has no server-side "remove
+orphans" capability for Compose stacks to call. `PortainerClient`'s three
+stack-write methods (`redeployStack`, `updateStackFile`,
+`redeployGitStack`) already forward `prune` unconditionally regardless of
+stack type — that part is unchanged (still correct, since it IS the
+right field for Swarm) — but now attach a `pruneWarning` to the response
+via `pruneNoopWarning`/`withPruneWarning` whenever `prune: true` is
+requested against a non-Swarm stack, so the caller isn't left assuming
+silent success. `containerChanges` (shipped same day, see CLAUDE.md) is
+the closest thing to a fix: it at least reveals, after the fact, that a
+"removed" service didn't actually get removed. The only real removal
+path for a Compose-stack orphan remains manual:
+`portainer_list_containers` (label `com.docker.compose.project=<stack
+name>`, `all: true`) to find it, `portainer_container_delete` to remove
+it.
+
 ### Backup .bak files can orphan on failure
 
 Compose/Swarm update writes the new compose file in-place with a

@@ -344,9 +344,9 @@ See STATUS.md for the live-verified details.
 - `npm test` — `node --test` (via tsx) over `test/*.test.ts`. One file
   per pure-function area (`redact`, `containers`, `env-compare`,
   `images`, `http-transport`, `env-warnings`, `compact-projections`,
-  `demux-logs`, `transport`, `version-sync`) — table-driven unit tests
-  against pure functions extracted from the client/tool layer, no
-  mocking involved.
+  `demux-logs`, `container-changes`, `prune-warning`, `transport`,
+  `version-sync`) — table-driven unit tests against pure functions
+  extracted from the client/tool layer, no mocking involved.
 - For anything that talks to Portainer, prefer integration tests
   against a real instance behind env-gated tests (don't mock — see
   working-style note about mocked-vs-real divergence).
