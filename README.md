@@ -41,7 +41,7 @@ itself, no separate call or schedule needed.
 | `portainer_list_containers` | List containers (compact by default; name/label/status filters; full=true for raw JSON) |
 | `portainer_get_container` | Container details (state, config, env, ports, mounts); compact by default, full=true for raw inspect JSON |
 | `portainer_compare_env_values` | Check whether two containers' env values are equal, without exposing either one |
-| `portainer_container_logs` | Tail of container logs (1-5000 lines), demuxed to clean newline-delimited text |
+| `portainer_container_logs` | Container logs (1-5000 line tail, or bounded by since/until), demuxed to clean newline-delimited text |
 | `portainer_list_volumes` | List Docker volumes in an endpoint |
 | `portainer_inspect_volume` | Volume details by name |
 | `portainer_list_networks` | List Docker networks in an endpoint |

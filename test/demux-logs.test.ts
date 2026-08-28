@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { demuxDockerLogs } from "../src/portainer.js";
+import { demuxDockerLogs, parseDockerTimeFilter } from "../src/portainer.js";
 
 // Builds one Docker log stream frame: 1-byte stream type + 3 zero bytes +
 // 4-byte big-endian payload length, followed by the payload itself.
@@ -68,5 +68,68 @@ describe("demuxDockerLogs", () => {
   it("handles a zero-length payload frame", () => {
     const buf = Buffer.concat([frame(1, ""), frame(1, "next\n")]);
     assert.equal(demuxDockerLogs(buf), "next\n");
+  });
+});
+
+describe("parseDockerTimeFilter", () => {
+  const NOW = Date.parse("2026-08-28T20:40:00Z");
+
+  it("treats a bare digit string as an absolute Unix timestamp", () => {
+    assert.equal(parseDockerTimeFilter("1725000000", NOW), 1725000000);
+  });
+
+  it("parses an RFC3339 datetime to Unix seconds", () => {
+    assert.equal(
+      parseDockerTimeFilter("2026-08-28T20:00:00Z", NOW),
+      Date.parse("2026-08-28T20:00:00Z") / 1000,
+    );
+  });
+
+  it("parses a minutes-only relative duration counted back from now", () => {
+    assert.equal(parseDockerTimeFilter("10m", NOW), NOW / 1000 - 10 * 60);
+  });
+
+  it("parses a combined hours+minutes relative duration", () => {
+    assert.equal(
+      parseDockerTimeFilter("1h30m", NOW),
+      NOW / 1000 - (1 * 3600 + 30 * 60),
+    );
+  });
+
+  it("parses a seconds-only relative duration", () => {
+    assert.equal(parseDockerTimeFilter("45s", NOW), NOW / 1000 - 45);
+  });
+
+  it("parses a combined days+hours+minutes+seconds relative duration", () => {
+    assert.equal(
+      parseDockerTimeFilter("1d2h3m4s", NOW),
+      NOW / 1000 - (1 * 86400 + 2 * 3600 + 3 * 60 + 4),
+    );
+  });
+
+  it("defaults `now` to the real clock when omitted", () => {
+    const before = Date.now();
+    const result = parseDockerTimeFilter("10m");
+    const after = Date.now();
+    assert.equal(result >= Math.floor(before / 1000) - 600, true);
+    assert.equal(result <= Math.floor(after / 1000) - 600, true);
+  });
+
+  it("throws on an empty string rather than silently matching zero duration", () => {
+    assert.throws(() => parseDockerTimeFilter("", NOW), /Invalid time filter/);
+  });
+
+  it("throws on nonsense input", () => {
+    assert.throws(
+      () => parseDockerTimeFilter("banana", NOW),
+      /Invalid time filter "banana"/,
+    );
+  });
+
+  it("throws on a duration with units out of order", () => {
+    assert.throws(
+      () => parseDockerTimeFilter("30m1h", NOW),
+      /Invalid time filter/,
+    );
   });
 });

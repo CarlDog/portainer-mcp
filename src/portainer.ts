@@ -419,6 +419,40 @@ export function demuxDockerLogs(buf: Buffer): string {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+const RELATIVE_DURATION_RE = /^(\d+d)?(\d+h)?(\d+m)?(\d+s)?$/;
+
+// Docker's raw HTTP API only accepts `since`/`until` as Unix timestamps
+// (whole seconds) -- forcing a caller to compute one by hand is exactly
+// the kind of friction the rest of this tool's fixes exist to remove.
+// Mirrors `docker logs --since`'s own CLI convention instead of inventing
+// a new one: a bare integer is an absolute Unix timestamp, an RFC3339
+// datetime is absolute, and a Go-style relative duration (combinable
+// d/h/m/s units, e.g. "10m", "1h30m", "45s") counts back from `now`.
+export function parseDockerTimeFilter(
+  value: string,
+  now: number = Date.now(),
+): number {
+  if (/^\d+$/.test(value)) {
+    return Number(value);
+  }
+  const rfc3339Ms = Date.parse(value);
+  if (!Number.isNaN(rfc3339Ms)) {
+    return Math.floor(rfc3339Ms / 1000);
+  }
+  const match = RELATIVE_DURATION_RE.exec(value);
+  if (match && (match[1] || match[2] || match[3] || match[4])) {
+    const days = match[1] ? Number(match[1].slice(0, -1)) : 0;
+    const hours = match[2] ? Number(match[2].slice(0, -1)) : 0;
+    const minutes = match[3] ? Number(match[3].slice(0, -1)) : 0;
+    const seconds = match[4] ? Number(match[4].slice(0, -1)) : 0;
+    const totalSeconds = ((days * 24 + hours) * 60 + minutes) * 60 + seconds;
+    return Math.floor(now / 1000) - totalSeconds;
+  }
+  throw new Error(
+    `Invalid time filter "${value}": expected a Unix timestamp, an RFC3339 datetime, or a relative duration like "10m" / "1h30m" / "45s".`,
+  );
+}
+
 export class PortainerClient {
   private readonly insecureDispatcher: Agent | undefined;
 
@@ -622,13 +656,20 @@ export class PortainerClient {
     endpointId: number,
     containerId: string,
     tail: number,
+    opts: { since?: string; until?: string } = {},
   ): Promise<string> {
-    const query = {
+    const query: Record<string, string> = {
       stdout: "true",
       stderr: "true",
       tail: String(tail),
       timestamps: "true",
     };
+    if (opts.since !== undefined) {
+      query.since = String(parseDockerTimeFilter(opts.since));
+    }
+    if (opts.until !== undefined) {
+      query.until = String(parseDockerTimeFilter(opts.until));
+    }
     const raw = await this.request<Buffer>(
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/${containerId}/logs`,
@@ -1794,7 +1835,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Container Logs",
       description:
-        "Fetch the tail of a container's logs, timestamped, as clean newline-delimited text. Docker's stream-multiplexing frame headers (present on non-TTY containers) are stripped server-side before the result is returned.",
+        "Fetch a container's logs, timestamped, as clean newline-delimited text. Docker's stream-multiplexing frame headers (present on non-TTY containers) are stripped server-side before the result is returned. Bound the payload with since/until instead of guessing at a tail count when you want a specific time window.",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
@@ -1806,11 +1847,28 @@ export function registerPortainerTools(
             .max(5000)
             .optional()
             .describe("Number of log lines to return (default 100)"),
+          since: z
+            .string()
+            .optional()
+            .describe(
+              'Only return logs at or after this time. Accepts a Unix timestamp (seconds), an RFC3339 datetime (e.g. "2026-08-28T20:00:00Z"), or a relative duration counted back from now (e.g. "10m", "1h30m", "45s") -- same convention as `docker logs --since`.',
+            ),
+          until: z
+            .string()
+            .optional()
+            .describe(
+              "Only return logs before this time. Same accepted formats as `since`.",
+            ),
         })
         .strict(),
     },
-    async ({ endpoint_id, container_id, tail }) =>
-      asText(await p.containerLogs(endpoint_id, container_id, tail ?? 100)),
+    async ({ endpoint_id, container_id, tail, since, until }) =>
+      asText(
+        await p.containerLogs(endpoint_id, container_id, tail ?? 100, {
+          since,
+          until,
+        }),
+      ),
   );
 
   server.registerTool(

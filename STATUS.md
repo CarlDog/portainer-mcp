@@ -629,6 +629,18 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
     that point on was preceded by a `git fetch` + log check before
     pushing, to catch any further races early. Worth knowing: this repo
     can have more than one active Claude session at a time.
+- **`portainer_container_logs` gained `since`/`until` (2026-08-28,
+  same-day follow-up to the dogfooding pass above).** Closes the other
+  half of the 2026-06-03 finding that the demux fix left open. New pure
+  helper `parseDockerTimeFilter` mirrors `docker logs --since`'s own
+  CLI convention rather than inventing a new format: a bare integer is
+  an absolute Unix timestamp, an RFC3339 datetime is absolute, and a
+  relative duration (`"10m"`, `"1h30m"`, `"45s"`, any combination of
+  d/h/m/s) counts back from now. Docker's raw HTTP API only accepts
+  Unix-timestamp seconds for `since`/`until`, so the conversion happens
+  client-side before the request. 10 new table-driven test cases
+  (123 → 133 total). Still open: an optional server-side substring/
+  regex filter, the narrower remaining piece of the original finding.
 
 ## Next
 
@@ -667,13 +679,15 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   case for splitting is stronger than it was. Still not urgent — queue
   as its own stage with proper planning if it's picked up, not a
   silent "while I'm in here" split.
-- ~~Clean up `portainer_container_logs` output.~~ **Demuxing done
-  2026-08-28** — Docker's 8-byte stream-multiplexing frame headers are
-  now stripped server-side, returning clean newline-delimited text (see
-  Done below). **Still open:** `since`/`until` and an optional
-  server-side substring filter, so callers can bound the payload
-  without fetching the full tail first — that half of the original
-  2026-06-03 finding wasn't in this pass's scope.
+- ~~Clean up `portainer_container_logs` output + add `since`/`until`.~~
+  **Fully done 2026-08-28** — demuxing landed first (see Done below);
+  `since`/`until` followed the same day, accepting a Unix timestamp,
+  RFC3339 datetime, or a relative duration ("10m", "1h30m") mirroring
+  `docker logs --since`'s own CLI convention (`parseDockerTimeFilter`,
+  10 new test cases). **Still open:** an optional server-side
+  substring/regex filter — `since`/`until` covers "just the last N
+  minutes," not "only lines matching X" — that narrower piece of the
+  original 2026-06-03 finding remains unbuilt.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
@@ -879,13 +893,15 @@ None active. Decisions made during scaffolding:
     unframed (TTY) stream is detected by failing to parse as a complete,
     gapless sequence of valid frames, falling back to raw text. See Done
     below.
-  - **Still open: server-side filtering to bound the payload.** Docker's
-    logs endpoint natively supports `since` / `until` (RFC3339 or
-    relative); expose those, plus an optional substring/regex `grep`
-    filter applied server-side. Lets a caller pull "just the last
-    10 min" or "only lines matching `grid fill`" instead of a giant
-    tail — the remaining fix for the token-limit hit on very large
-    tails.
+  - ~~**Server-side filtering to bound the payload.**~~ **`since`/`until`
+    done 2026-08-28** — `parseDockerTimeFilter` accepts a Unix
+    timestamp, an RFC3339 datetime, or a relative duration ("10m",
+    "1h30m"), mirroring `docker logs --since`'s own CLI convention;
+    Docker's raw HTTP API only takes Unix-timestamp seconds, so the
+    conversion happens client-side. **Still open:** an optional
+    substring/regex `grep` filter applied server-side — lets a caller
+    pull "only lines matching `grid fill`" instead of a giant tail,
+    the narrower remaining piece of this finding.
 - ~~`portainer_list_containers` dumps raw full objects for ALL
   containers — token-limit pain on a busy host (2026-06-04).~~
   **Resolved 2026-07-30** — server-side `filters` (name/label/status)
