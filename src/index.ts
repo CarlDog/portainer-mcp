@@ -123,7 +123,21 @@ if (port) {
     res.json({ status: "ok", transport: "http", port });
   });
 
-  const httpServer = httpApp.listen(port, bindHost, () => {
+  // Express 5's app.listen() wraps this callback with once() and registers
+  // it as the server's own 'error' listener, so a bind failure (e.g. a
+  // stale container still bound to the port during a Portainer manual
+  // recreate -- docker-deployments.md section 4) now calls back with an
+  // Error instead of the Express 4 behavior of throwing it as an uncaught
+  // exception. Without this check, a port collision would silently log a
+  // false "listening" line while nothing is actually bound, instead of the
+  // loud crash Docker's restart policy is designed to act on.
+  const httpServer = httpApp.listen(port, bindHost, (err?: Error) => {
+    if (err) {
+      console.error(
+        `portainer-mcp: failed to bind ${bindHost}:${port}: ${err.message}`,
+      );
+      process.exit(1);
+    }
     console.error(
       `portainer-mcp HTTP transport listening on ${bindHost}:${port} ` +
         `(auth=${authToken ? "bearer" : "none"}, ` +

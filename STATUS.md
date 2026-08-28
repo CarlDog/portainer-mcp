@@ -823,9 +823,9 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   a JS exception rather than returning an MCP `isError: true` result,
   which produced three false "PROBLEM" lines before the bug was
   found and the script rewritten to inspect the actual result object.
-  express/undici/typescript remained pinned at the time; undici was
-  bumped separately the same day (see below), express and typescript
-  remain deferred, and PR #11 still tracks all three.
+  express/undici/typescript remained pinned at the time; undici and
+  express were both bumped separately the same day (see below),
+  typescript remains deferred, and PR #11 still tracks all three.
 - **Dependabot PR #10 merged, and the label-config gap fixed
   (2026-08-28).** #10 (GitHub Actions major bump — `actions/checkout`
   6→7, `gitleaks/gitleaks-action` 2→3) checked out low-risk on
@@ -896,6 +896,58 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   its TLS listener — moot for correctness now that `allowH2: false` is
   pinned, but a live call against the real instance after deploying is
   still the right final check per this repo's own testing philosophy.
+- **express 4.22.2 → 5.2.1 (2026-08-28), third and final PR #11 major
+  addressed — typescript remains the one still deferred.** Researched
+  first, then confirmed every candidate breaking change against actual
+  usage rather than assuming any applied. Only one did: `app.listen()`
+  now wraps its callback with `once()` and registers it as the
+  server's own `error` listener, so a bind failure calls back with an
+  `Error` instead of Express 4's throw-as-uncaught-exception behavior.
+  `src/index.ts`'s HTTP-transport listen callback took no `err`
+  parameter and didn't check for one — left as-is, a port collision
+  (the exact docker-deployments.md section 4 scenario: a stale
+  container still holding the port during a manual Portainer recreate)
+  would have silently logged a false "listening" line while nothing
+  was actually bound, instead of the loud, actionable crash Docker's
+  restart policy expects. Fixed: the callback now checks `err` and
+  `process.exit(1)`s with a clear message on a bind failure. Bumped
+  `@types/express` 4.17.25 → 5.0.6 alongside (typechecked clean).
+  Everything else researched and confirmed NOT applicable by reading
+  actual usage, not by trusting the release notes alone: path-to-regexp
+  v8's stricter route-pattern syntax (this repo's only two routes,
+  `/mcp` and `/health`, are literal strings with zero pattern syntax —
+  the single largest category of real-world Express 5 breakage is
+  simply inert here), every removed/renamed method (`app.del`,
+  `req.param()`, old argument orders on `res.json`/`res.send`/
+  `res.redirect`, etc. — zero matches on grep), `req.query`/`req.body`
+  default changes (neither route ever reads `req.query`; the MCP SDK's
+  own POST handler independently gates on Content-Type before ever
+  reading `req.body`, so the undefined-vs-`{}` difference is moot),
+  `express.static()` (never used), and the stricter `res.status()`
+  validation (already only ever called with fixed literal codes).
+  `src/shared/http-transport.ts` — the fleet-wide canonical MCP-F03
+  template shared with sibling repos — required zero changes.
+  Verification went beyond typecheck/lint/test, which don't touch
+  `src/index.ts` at all (the existing `test/http-transport.test.ts`
+  builds its own bare `express()` app directly and never imports or
+  runs the real bootstrap): manually started the built server and
+  drove a full initialize handshake, `tools/list`, and a
+  session-terminating `DELETE /mcp` against the real HTTP transport —
+  confirmed the terminated session correctly 404s on reuse — then,
+  the actual point of this fix, started a second instance on the same
+  already-bound port and confirmed it now logs the bind failure and
+  exits 1 instead of falsely logging "listening." Also built and ran
+  the actual multi-stage Docker image (not just `npm run dev`) in HTTP
+  mode, curled `/health` inside the container, then `docker stop`'d it
+  to send a real SIGTERM — confirmed the `"shutting down (SIGTERM)"`
+  graceful-shutdown log line fired and the container exited cleanly
+  (`exitCode=0`, not a forced kill after the 10s grace period). (A
+  first attempt at this same check via `npm run dev` + Git-Bash `kill`
+  on the Windows dev machine didn't reliably deliver the signal to the
+  right process — PID tracking through bash's `$!` on Windows doesn't
+  match the real `node.exe` PID — so the real Linux container was used
+  instead, which is also the actual deployment target and gave a clean
+  result.)
 
 ## Next
 

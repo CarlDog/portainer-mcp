@@ -13,6 +13,43 @@ rather than after the fact.
 
 ## [Unreleased]
 
+## [0.8.3] - 2026-08-28
+
+### Changed
+
+- Bumped `express` 4.22.2 → 5.2.1 and `@types/express` 4.17.25 → 5.0.6,
+  the third and final major from Dependabot PR #11 to be addressed
+  (typescript remains deferred — see STATUS.md). Researched the real
+  breaking changes before touching anything, then confirmed each one
+  against this codebase's actual usage rather than assuming. Only one
+  applied: Express 5's `app.listen()` wraps its callback with `once()`
+  and registers it as the server's own `error` listener, so a bind
+  failure (e.g. a stale container still holding the port during a
+  Portainer manual recreate) now calls back with an `Error` instead of
+  the Express 4 behavior of throwing it as an uncaught exception. Fixed
+  in `src/index.ts`'s HTTP-transport `listen()` callback to check for
+  and log the error, then `process.exit(1)` — without this fix, a port
+  collision would have silently logged a false "listening" line while
+  nothing was actually bound. Everything else researched and confirmed
+  not applicable: path-to-regexp v8's stricter route syntax (this repo's
+  only two routes, `/mcp` and `/health`, are literal strings with zero
+  pattern syntax), removed/renamed methods, `req.query`/`req.body`
+  default changes, `express.static()` changes, and the stricter
+  `res.status()` range (already only ever called with fixed literal
+  codes). Verified beyond typecheck/lint/test: manually started the
+  built server, drove a full initialize handshake, `tools/list`, and a
+  session-terminating `DELETE /mcp` (confirming the now-terminated
+  session correctly 404s on reuse) against the real HTTP transport —
+  none of this is covered by the existing test suite, which only
+  exercises `src/shared/http-transport.ts` directly, never
+  `src/index.ts`'s actual bootstrap. Most importantly, empirically
+  proved the listen-callback fix: started a second instance on the
+  same already-bound port and confirmed it now logs the bind failure
+  and exits 1, instead of a false "listening" line. Also built and ran
+  the real multi-stage Docker image in HTTP mode and sent it a genuine
+  SIGTERM via `docker stop` — confirmed graceful shutdown and a clean
+  `exitCode=0`, not a forced kill.
+
 ## [0.8.2] - 2026-08-28
 
 ### Changed
