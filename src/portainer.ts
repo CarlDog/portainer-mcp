@@ -480,8 +480,15 @@ export class PortainerClient {
     const status = res.statusCode;
     if (status < 200 || status >= 300) {
       const errBody = await res.body.text().catch(() => "");
+      // 2000 chars, not the original 200 -- Portainer's own validation and
+      // git-auth error messages routinely run past 200 on their own (see
+      // setStackEnv's git-managed error wrapper below, which is itself
+      // longer than that), so the old cap was silently truncating the one
+      // piece of diagnostic detail a caller needs to actually fix a
+      // failed call. Still bounded, so a pathological HTML error page
+      // can't blow up the response.
       throw new Error(
-        `Portainer ${status} for ${method} ${path}: ${errBody.slice(0, 200)}`,
+        `Portainer ${status} for ${method} ${path}: ${errBody.slice(0, 2000)}`,
       );
     }
     // Raw-bytes branch, bypassing both the JSON and text branches below.
@@ -2267,7 +2274,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: Recreate Container",
       description:
-        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded.",
+        "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded. TIMEOUT RISK: image pull + stop + remove + create all happen inline before this call returns, so a large image over a slow connection can take minutes and may exceed the calling MCP client's own tool-call timeout. If that happens, the recreate is NOT aborted server-side — it keeps running in Portainer regardless of whether the client gave up waiting. If this call appears to time out, verify the actual result with portainer_get_container rather than assuming it failed.",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
