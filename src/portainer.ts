@@ -1294,7 +1294,7 @@ export function registerPortainerTools(
       title: "Portainer: List Endpoints",
       description:
         "List all Portainer environments (Docker hosts/Swarms registered with Portainer).",
-      inputSchema: {},
+      inputSchema: z.object({}).strict(),
     },
     async () => asText(await p.listEndpoints()),
   );
@@ -1305,15 +1305,17 @@ export function registerPortainerTools(
       title: "Portainer: List Stacks",
       description:
         "List all stacks managed by Portainer, optionally filtered by endpoint.",
-      inputSchema: {
-        endpoint_id: z
-          .number()
-          .int()
-          .optional()
-          .describe(
-            "Optional endpoint ID to filter stacks to a single Docker host",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z
+            .number()
+            .int()
+            .optional()
+            .describe(
+              "Optional endpoint ID to filter stacks to a single Docker host",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id }) => asText(await p.listStacks(endpoint_id)),
   );
@@ -1324,15 +1326,17 @@ export function registerPortainerTools(
       title: "Portainer: Get Stack",
       description:
         "Get full stack details (compose file content, env, status, git config) by stack ID. Compose file content (StackFileContent) is included by default; set include_file=false to skip the extra fetch when you only need status/env/git config.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID"),
-        include_file: z
-          .boolean()
-          .optional()
-          .describe(
-            "Include compose file content (StackFileContent). Default true.",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID"),
+          include_file: z
+            .boolean()
+            .optional()
+            .describe(
+              "Include compose file content (StackFileContent). Default true.",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, include_file }) =>
       asText(await p.getStack(stack_id, { includeFile: include_file })),
@@ -1344,41 +1348,43 @@ export function registerPortainerTools(
       title: "Portainer: List Containers",
       description:
         "List containers in an endpoint (compact projection by default; set full=true for complete Docker JSON). Filter by name substring, label, or status. Set all=true to include stopped containers.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        all: z
-          .boolean()
-          .optional()
-          .describe("Include stopped containers (default false)"),
-        name: z
-          .string()
-          .optional()
-          .describe("Filter: container name substring"),
-        label: z
-          .string()
-          .optional()
-          .describe(
-            'Filter: label "key" or "key=value" — e.g. "com.docker.compose.project=myapp" lists a stack\'s containers',
-          ),
-        status: z
-          .enum([
-            "created",
-            "restarting",
-            "running",
-            "removing",
-            "paused",
-            "exited",
-            "dead",
-          ])
-          .optional()
-          .describe("Filter by container status (implies all=true)"),
-        full: z
-          .boolean()
-          .optional()
-          .describe(
-            "Return complete Docker JSON per container (default: compact projection)",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          all: z
+            .boolean()
+            .optional()
+            .describe("Include stopped containers (default false)"),
+          name: z
+            .string()
+            .optional()
+            .describe("Filter: container name substring"),
+          label: z
+            .string()
+            .optional()
+            .describe(
+              'Filter: label "key" or "key=value" — e.g. "com.docker.compose.project=myapp" lists a stack\'s containers',
+            ),
+          status: z
+            .enum([
+              "created",
+              "restarting",
+              "running",
+              "removing",
+              "paused",
+              "exited",
+              "dead",
+            ])
+            .optional()
+            .describe("Filter by container status (implies all=true)"),
+          full: z
+            .boolean()
+            .optional()
+            .describe(
+              "Return complete Docker JSON per container (default: compact projection)",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, all, name, label, status, full }) => {
       const result = await p.listContainers(endpoint_id, {
@@ -1398,10 +1404,12 @@ export function registerPortainerTools(
       title: "Portainer: Get Container",
       description:
         "Get container details (state, config, networks, mounts) by ID or name.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id }) =>
       asText(await p.getContainer(endpoint_id, container_id)),
@@ -1413,18 +1421,32 @@ export function registerPortainerTools(
       title: "Portainer: Compare Two Env Values",
       description:
         "Check whether two containers' env var values are equal, without ever exposing either value. Fetches both raw values server-side, hashes them, and returns only match: true/false plus found/empty flags for each side — never the values or a hash of them. Use this instead of eyeballing two redacted portainer_get_container results when two services are supposed to share a secret (e.g. a shared bearer token between a client and the service it authenticates to) and you need to confirm they actually match. An empty or missing value on either side is never reported as a match, even against another empty/missing value.",
-      inputSchema: {
-        a: z.object({
-          endpoint_id: z.number().int().describe("Endpoint ID for side A"),
-          container_id: z.string().describe("Container ID or name for side A"),
-          var_name: z.string().describe("Env var name to compare on side A"),
-        }),
-        b: z.object({
-          endpoint_id: z.number().int().describe("Endpoint ID for side B"),
-          container_id: z.string().describe("Container ID or name for side B"),
-          var_name: z.string().describe("Env var name to compare on side B"),
-        }),
-      },
+      inputSchema: z
+        .object({
+          a: z
+            .object({
+              endpoint_id: z.number().int().describe("Endpoint ID for side A"),
+              container_id: z
+                .string()
+                .describe("Container ID or name for side A"),
+              var_name: z
+                .string()
+                .describe("Env var name to compare on side A"),
+            })
+            .strict(),
+          b: z
+            .object({
+              endpoint_id: z.number().int().describe("Endpoint ID for side B"),
+              container_id: z
+                .string()
+                .describe("Container ID or name for side B"),
+              var_name: z
+                .string()
+                .describe("Env var name to compare on side B"),
+            })
+            .strict(),
+        })
+        .strict(),
     },
     async ({ a, b }) =>
       asText(
@@ -1449,17 +1471,19 @@ export function registerPortainerTools(
       title: "Portainer: Container Logs",
       description:
         "Fetch the tail of a container's logs (raw output, may include Docker stream multiplexing prefixes for non-TTY containers).",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-        tail: z
-          .number()
-          .int()
-          .min(1)
-          .max(5000)
-          .optional()
-          .describe("Number of log lines to return (default 100)"),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          tail: z
+            .number()
+            .int()
+            .min(1)
+            .max(5000)
+            .optional()
+            .describe("Number of log lines to return (default 100)"),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id, tail }) =>
       asText(await p.containerLogs(endpoint_id, container_id, tail ?? 100)),
@@ -1471,19 +1495,23 @@ export function registerPortainerTools(
       title: "Portainer: List Volumes",
       description:
         "List Docker volumes on an endpoint. Useful for spotting orphan/unused volumes accumulated from deleted stacks. Optional filters: `dangling: true` returns only volumes with no container reference (true orphans), `dangling: false` returns only in-use volumes, omit for all. `name` is a substring filter on volume name.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        dangling: z
-          .boolean()
-          .optional()
-          .describe(
-            "Filter by usage. true = only unused (no container references), false = only in-use, omit = all volumes.",
-          ),
-        name: z
-          .string()
-          .optional()
-          .describe("Substring filter on volume name (Docker's name filter)."),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          dangling: z
+            .boolean()
+            .optional()
+            .describe(
+              "Filter by usage. true = only unused (no container references), false = only in-use, omit = all volumes.",
+            ),
+          name: z
+            .string()
+            .optional()
+            .describe(
+              "Substring filter on volume name (Docker's name filter).",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, dangling, name }) =>
       asText(await p.listVolumes(endpoint_id, { dangling, name })),
@@ -1495,15 +1523,17 @@ export function registerPortainerTools(
       title: "Portainer: Inspect Volume",
       description:
         "Get full details for a single Docker volume — Mountpoint (host path), Driver, CreatedAt, Labels (including the Compose project label that maps to a stack), Scope, and Options. Use this to decide whether an unused volume is safe to remove (check Labels for the originating stack name; check Mountpoint size on disk if needed).",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        volume_name: z
-          .string()
-          .min(1)
-          .describe(
-            "Volume name (from portainer_list_volumes). Names with special characters are URL-encoded automatically.",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          volume_name: z
+            .string()
+            .min(1)
+            .describe(
+              "Volume name (from portainer_list_volumes). Names with special characters are URL-encoded automatically.",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, volume_name }) =>
       asText(await p.inspectVolume(endpoint_id, volume_name)),
@@ -1515,9 +1545,11 @@ export function registerPortainerTools(
       title: "Portainer: List Images",
       description:
         "List Docker images on an endpoint with usage info (`used: true` if at least one container references the image). Use this to see what portainer_prune_images would remove, or to spot old digests left behind by a rebuild-and-repush. Compact by design (id, tags, size, created, used) — no full/compact toggle needed.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+        })
+        .strict(),
     },
     async ({ endpoint_id }) => asText(await p.listImages(endpoint_id)),
   );
@@ -1528,20 +1560,22 @@ export function registerPortainerTools(
       title: "Portainer: Prune Images",
       description:
         "Bulk-delete unused Docker images on an endpoint. Default removes only dangling/untagged images (Docker's own `docker image prune` default) — the leftovers once a rebuild-and-repush moves a tag to a new digest. Set all_unused=true to also remove tagged images not backing any container right now (like `docker image prune -a`) — reclaims more space but can delete an image kept around for rollback. Note: portainer_redeploy_stack, portainer_update_stack_file, portainer_redeploy_git_stack, and portainer_recreate_container already run the dangling-only version of this automatically after every call — reach for this tool for the all_unused case, or to clear backlog on an endpoint outside a redeploy.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        all_unused: z
-          .boolean()
-          .optional()
-          .describe(
-            "true = remove all unused images including tagged ones (docker image prune -a). false/omit = dangling/untagged only (safe default).",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge this bulk-deletes images",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          all_unused: z
+            .boolean()
+            .optional()
+            .describe(
+              "true = remove all unused images including tagged ones (docker image prune -a). false/omit = dangling/untagged only (safe default).",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge this bulk-deletes images",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, all_unused }) =>
       asText(
@@ -1554,7 +1588,7 @@ export function registerPortainerTools(
     {
       title: "Portainer: System Status",
       description: "Get Portainer version and system info.",
-      inputSchema: {},
+      inputSchema: z.object({}).strict(),
     },
     async () => asText(await p.systemStatus()),
   );
@@ -1565,10 +1599,12 @@ export function registerPortainerTools(
       title: "Portainer: Start Container",
       description:
         "Start a stopped container on a Docker endpoint. Pure passthrough to Docker's POST /containers/{id}/start.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id }) => {
       await p.containerStart(endpoint_id, container_id);
@@ -1587,18 +1623,20 @@ export function registerPortainerTools(
       title: "Portainer: Stop Container",
       description:
         "Stop a running container on a Docker endpoint. Sends SIGTERM and waits up to `timeout` seconds before SIGKILL (Docker default 10s if omitted).",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-        timeout: z
-          .number()
-          .int()
-          .min(0)
-          .optional()
-          .describe(
-            "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          timeout: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id, timeout }) => {
       await p.containerStop(endpoint_id, container_id, timeout);
@@ -1617,18 +1655,20 @@ export function registerPortainerTools(
       title: "Portainer: Restart Container",
       description:
         "Restart a container on a Docker endpoint. Sends SIGTERM, waits up to `timeout` seconds, SIGKILL, then start.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-        timeout: z
-          .number()
-          .int()
-          .min(0)
-          .optional()
-          .describe(
-            "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          timeout: z
+            .number()
+            .int()
+            .min(0)
+            .optional()
+            .describe(
+              "Seconds to wait for graceful SIGTERM before SIGKILL (Docker default 10s)",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id, timeout }) => {
       await p.containerRestart(endpoint_id, container_id, timeout);
@@ -1647,21 +1687,23 @@ export function registerPortainerTools(
       title: "Portainer: Kill Container",
       description:
         "Send a signal (default SIGKILL) to a container. Skips graceful shutdown — small but real risk of corrupting state mid-write. Use restart/stop unless you specifically need to bypass the entrypoint's signal handlers.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-        signal: z
-          .string()
-          .optional()
-          .describe(
-            "Signal to send (e.g. SIGKILL, SIGTERM, SIGUSR1). Docker default SIGKILL.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge skipping graceful shutdown",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          signal: z
+            .string()
+            .optional()
+            .describe(
+              "Signal to send (e.g. SIGKILL, SIGTERM, SIGUSR1). Docker default SIGKILL.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge skipping graceful shutdown",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id, signal }) => {
       await p.containerKill(endpoint_id, container_id, signal);
@@ -1681,24 +1723,26 @@ export function registerPortainerTools(
       title: "Portainer: Redeploy Stack",
       description:
         "Redeploy a file-based Portainer stack (Compose or Swarm). Triggers a synchronous pull-and-recreate; the call may block for minutes on large stacks. Refuses git-managed stacks. NOTE: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. After redeploying, automatically runs a dangling-only image prune on the stack's endpoint (see portainer_prune_images) and appends the result as `imagePrune` on the response — cleans up the digest the redeploy just superseded without a separate call.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID to redeploy"),
-        pull_image: z
-          .boolean()
-          .optional()
-          .describe("Pull the latest image before recreating (default true)"),
-        prune: z
-          .boolean()
-          .optional()
-          .describe(
-            "Remove containers for services no longer in the compose (default false)",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive action",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID to redeploy"),
+          pull_image: z
+            .boolean()
+            .optional()
+            .describe("Pull the latest image before recreating (default true)"),
+          prune: z
+            .boolean()
+            .optional()
+            .describe(
+              "Remove containers for services no longer in the compose (default false)",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive action",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, pull_image, prune }) =>
       asText(
@@ -1715,30 +1759,32 @@ export function registerPortainerTools(
       title: "Portainer: Update Stack File",
       description:
         "Replace the compose YAML on a file-based Portainer stack (Compose or Swarm) and redeploy. Round-trips the existing stack-level Env so secrets aren't wiped. Sibling of portainer_redeploy_stack — that tool round-trips the existing file as-is; this one takes a new file. Refuses git-managed stacks (edit the repo + portainer_redeploy_git_stack instead) and non-Compose/Swarm types. Synchronous; may block for minutes on large stacks. Same self-redeploy caveat as portainer_redeploy_stack: redeploying portainer-mcp's own stack will appear to fail because the in-flight HTTP fetch sees a connection drop mid-redeploy — the redeploy still succeeds in Portainer. Same automatic post-redeploy image prune as portainer_redeploy_stack — see `imagePrune` on the response.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID to update"),
-        compose_content: z
-          .string()
-          .min(1)
-          .describe(
-            "New compose YAML to install on the stack. Replaces the stored file in full — no diff/merge. Caller is responsible for round-tripping anything they want to keep. Portainer validates the YAML at deploy time; bad YAML surfaces as a deploy error.",
-          ),
-        pull_image: z
-          .boolean()
-          .optional()
-          .describe("Pull the latest image before recreating (default true)"),
-        prune: z
-          .boolean()
-          .optional()
-          .describe(
-            "Remove containers for services no longer in the compose (default false)",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive action",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID to update"),
+          compose_content: z
+            .string()
+            .min(1)
+            .describe(
+              "New compose YAML to install on the stack. Replaces the stored file in full — no diff/merge. Caller is responsible for round-tripping anything they want to keep. Portainer validates the YAML at deploy time; bad YAML surfaces as a deploy error.",
+            ),
+          pull_image: z
+            .boolean()
+            .optional()
+            .describe("Pull the latest image before recreating (default true)"),
+          prune: z
+            .boolean()
+            .optional()
+            .describe(
+              "Remove containers for services no longer in the compose (default false)",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive action",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, compose_content, pull_image, prune }) =>
       asText(
@@ -1755,24 +1801,26 @@ export function registerPortainerTools(
       title: "Portainer: Redeploy Git Stack",
       description:
         "Redeploy a git-managed Portainer stack (Compose or Swarm). Pulls the latest commit from the stack's existing git ref, then redeploys. Round-trips the existing Env, ReferenceName, and git auth config so omitting them doesn't wipe them. Synchronous; may block for minutes on large stacks. Refuses non-git stacks (use portainer_redeploy_stack for those). After redeploying, automatically runs a dangling-only image prune on the stack's endpoint and appends the result as `imagePrune` on the response — the usual call after CI publishes a new image and you want the stack to pick it up.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID to redeploy"),
-        pull_image: z
-          .boolean()
-          .optional()
-          .describe("Pull the latest image before recreating (default true)"),
-        prune: z
-          .boolean()
-          .optional()
-          .describe(
-            "Remove containers for services no longer in the compose. Default: preserve the stack's existing setting (false if never set).",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive action",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID to redeploy"),
+          pull_image: z
+            .boolean()
+            .optional()
+            .describe("Pull the latest image before recreating (default true)"),
+          prune: z
+            .boolean()
+            .optional()
+            .describe(
+              "Remove containers for services no longer in the compose. Default: preserve the stack's existing setting (false if never set).",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive action",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, pull_image, prune }) =>
       asText(
@@ -1789,19 +1837,21 @@ export function registerPortainerTools(
       title: "Portainer: Recreate Container",
       description:
         "Pull the image and recreate a single container, preserving its Config and HostConfig (env, mounts, networks, restart policy, etc). Cleaner than stack-redeploy for 'update one service after pushing a new image' workflows. The old container is stopped and removed; the new one keeps the same name and resource controls. Synchronous; the response is the new container's full inspect JSON plus an `imagePrune` field — recreate automatically runs a dangling-only image prune on the endpoint afterward, cleaning up the digest the recreate just superseded.",
-      inputSchema: {
-        endpoint_id: z.number().int().describe("Endpoint ID"),
-        container_id: z.string().describe("Container ID or name"),
-        pull_image: z
-          .boolean()
-          .optional()
-          .describe("Pull the latest image before recreating (default true)"),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive action",
-          ),
-      },
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          container_id: z.string().describe("Container ID or name"),
+          pull_image: z
+            .boolean()
+            .optional()
+            .describe("Pull the latest image before recreating (default true)"),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive action",
+            ),
+        })
+        .strict(),
     },
     async ({ endpoint_id, container_id, pull_image }) =>
       asText(
@@ -1817,38 +1867,42 @@ export function registerPortainerTools(
       title: "Portainer: Create Stack",
       description:
         "Create a new file-based standalone Compose stack on a Docker endpoint. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint (catches Portainer's silent same-name Swarm-stack deletion trap and prevents accidental overwrites — use portainer_redeploy_stack to update an existing stack, or portainer_delete_stack first if you really mean to recreate). Synchronous deploy; may block for minutes on large stacks. Returns the new stack JSON including its assigned ID.",
-      inputSchema: {
-        name: z
-          .string()
-          .min(1)
-          .describe(
-            "Stack name. Lowercase recommended; must be unique on the endpoint.",
-          ),
-        endpoint_id: z
-          .number()
-          .int()
-          .describe("Endpoint ID where the stack should be deployed"),
-        compose: z
-          .string()
-          .min(1)
-          .describe(
-            "Full docker-compose.yml content as a string. Use ${VAR} references for any secrets and pass the values via env, not inlined in the YAML.",
-          ),
-        env: z
-          .array(
-            z.object({
-              name: z.string(),
-              value: z.string(),
-            }),
-          )
-          .optional()
-          .describe(
-            "Stack-level environment variables. Each becomes available for ${VAR} substitution in the compose file.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe("Must be exactly true to acknowledge creating a new stack"),
-      },
+      inputSchema: z
+        .object({
+          name: z
+            .string()
+            .min(1)
+            .describe(
+              "Stack name. Lowercase recommended; must be unique on the endpoint.",
+            ),
+          endpoint_id: z
+            .number()
+            .int()
+            .describe("Endpoint ID where the stack should be deployed"),
+          compose: z
+            .string()
+            .min(1)
+            .describe(
+              "Full docker-compose.yml content as a string. Use ${VAR} references for any secrets and pass the values via env, not inlined in the YAML.",
+            ),
+          env: z
+            .array(
+              z.object({
+                name: z.string(),
+                value: z.string(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Stack-level environment variables. Each becomes available for ${VAR} substitution in the compose file.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge creating a new stack",
+            ),
+        })
+        .strict(),
     },
     async ({ name, endpoint_id, compose, env }) =>
       asText(
@@ -1866,67 +1920,71 @@ export function registerPortainerTools(
       title: "Portainer: Create Git-Managed Stack",
       description:
         "Create a new git-managed standalone Compose stack — Portainer clones the repo at the specified ref and deploys the compose file from inside it. Future redeploys via portainer_redeploy_git_stack will pull the latest commit. Pre-flight check refuses to create if a stack with the same name already exists on this endpoint. For a private repo, prefer git_credential_id (references an existing stored Portainer credential — nothing secret transits this call) over username/password. SECURITY NOTE: if you do pass username/password, the password (PAT/token) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate. git_credential_id and username/password are mutually exclusive.",
-      inputSchema: {
-        name: z
-          .string()
-          .min(1)
-          .describe("Stack name. Must be unique on the endpoint."),
-        endpoint_id: z
-          .number()
-          .int()
-          .describe("Endpoint ID where the stack should be deployed"),
-        repository_url: z
-          .string()
-          .url()
-          .describe(
-            "Git repository URL (e.g. https://github.com/user/repo). HTTPS only — SSH not supported via this endpoint.",
-          ),
-        reference: z
-          .string()
-          .optional()
-          .describe(
-            "Git reference to deploy from (e.g. refs/heads/main, refs/tags/v1.0). Default: refs/heads/main.",
-          ),
-        compose_path: z
-          .string()
-          .optional()
-          .describe(
-            "Path to the compose file within the repo. Default: docker-compose.yml.",
-          ),
-        env: z
-          .array(
-            z.object({
-              name: z.string(),
-              value: z.string(),
-            }),
-          )
-          .optional()
-          .describe(
-            "Stack-level environment variables for ${VAR} substitution in the compose file.",
-          ),
-        username: z
-          .string()
-          .optional()
-          .describe(
-            "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token').",
-          ),
-        password: z
-          .string()
-          .optional()
-          .describe(
-            "Git auth password / Personal Access Token (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
-          ),
-        git_credential_id: z
-          .number()
-          .int()
-          .optional()
-          .describe(
-            "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe("Must be exactly true to acknowledge creating a new stack"),
-      },
+      inputSchema: z
+        .object({
+          name: z
+            .string()
+            .min(1)
+            .describe("Stack name. Must be unique on the endpoint."),
+          endpoint_id: z
+            .number()
+            .int()
+            .describe("Endpoint ID where the stack should be deployed"),
+          repository_url: z
+            .string()
+            .url()
+            .describe(
+              "Git repository URL (e.g. https://github.com/user/repo). HTTPS only — SSH not supported via this endpoint.",
+            ),
+          reference: z
+            .string()
+            .optional()
+            .describe(
+              "Git reference to deploy from (e.g. refs/heads/main, refs/tags/v1.0). Default: refs/heads/main.",
+            ),
+          compose_path: z
+            .string()
+            .optional()
+            .describe(
+              "Path to the compose file within the repo. Default: docker-compose.yml.",
+            ),
+          env: z
+            .array(
+              z.object({
+                name: z.string(),
+                value: z.string(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Stack-level environment variables for ${VAR} substitution in the compose file.",
+            ),
+          username: z
+            .string()
+            .optional()
+            .describe(
+              "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token').",
+            ),
+          password: z
+            .string()
+            .optional()
+            .describe(
+              "Git auth password / Personal Access Token (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
+            ),
+          git_credential_id: z
+            .number()
+            .int()
+            .optional()
+            .describe(
+              "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge creating a new stack",
+            ),
+        })
+        .strict(),
     },
     async ({
       name,
@@ -1959,58 +2017,62 @@ export function registerPortainerTools(
       title: "Portainer: Convert File-Based Stack to Git-Managed",
       description:
         "Convert an existing file-based Compose/Swarm stack into a git-managed one in one atomic operation. Reads the source stack's real env (including secret values, server-side, never exposed to tool-call logs), deletes the source, then creates a new git-managed stack with the same name and endpoint, inheriting the env. Requires two-factor confirm: confirm: true AND confirm_name matching the source stack's actual Name. ATOMICITY RISK: the delete happens before the create. If the create fails (bad repo URL, malformed compose at HEAD, network issue, or — for a private repo — missing/invalid credentials) the source is gone and the error includes a recovery payload with the original compose YAML + the env key NAMES so you can rebuild via portainer_create_stack and re-add env values via the Portainer UI. For a private repo, prefer git_credential_id (references an existing stored Portainer credential) over username/password — both are validated up front, before the source stack is touched, so a bad combination refuses cleanly rather than deleting first. NEW STACK USES THE REPO'S COMPOSE — if the repo's docker-compose.yml differs from the source's (different ports, volumes, etc.), the new stack picks up the repo's values. SELF-CONVERSION WARNING: do not run this against the portainer-mcp stack itself — the call dies mid-flight when portainer-mcp is killed. This tool is the right, safer choice for every OTHER stack — prefer it over a manual delete-and-recreate through the UI, which silently drops any env var the operator forgets to retype.",
-      inputSchema: {
-        source_stack_id: z
-          .number()
-          .int()
-          .describe("ID of the existing file-based stack to convert"),
-        repository_url: z
-          .string()
-          .url()
-          .describe(
-            "Git repository URL providing the new stack's compose (e.g. https://github.com/user/repo). HTTPS only.",
-          ),
-        reference: z
-          .string()
-          .optional()
-          .describe("Git reference to deploy from. Default: refs/heads/main."),
-        compose_path: z
-          .string()
-          .optional()
-          .describe(
-            "Path to the compose file within the repo. Default: docker-compose.yml.",
-          ),
-        username: z
-          .string()
-          .optional()
-          .describe(
-            "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works.",
-          ),
-        password: z
-          .string()
-          .optional()
-          .describe(
-            "Git auth password / PAT (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
-          ),
-        git_credential_id: z
-          .number()
-          .int()
-          .optional()
-          .describe(
-            "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
-          ),
-        confirm_name: z
-          .string()
-          .min(1)
-          .describe(
-            "Must exactly match the source stack's Name. Two-factor confirm.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive (delete-then-create) operation",
-          ),
-      },
+      inputSchema: z
+        .object({
+          source_stack_id: z
+            .number()
+            .int()
+            .describe("ID of the existing file-based stack to convert"),
+          repository_url: z
+            .string()
+            .url()
+            .describe(
+              "Git repository URL providing the new stack's compose (e.g. https://github.com/user/repo). HTTPS only.",
+            ),
+          reference: z
+            .string()
+            .optional()
+            .describe(
+              "Git reference to deploy from. Default: refs/heads/main.",
+            ),
+          compose_path: z
+            .string()
+            .optional()
+            .describe(
+              "Path to the compose file within the repo. Default: docker-compose.yml.",
+            ),
+          username: z
+            .string()
+            .optional()
+            .describe(
+              "Git auth username (private repos only). For GitHub PAT auth, any non-empty value works.",
+            ),
+          password: z
+            .string()
+            .optional()
+            .describe(
+              "Git auth password / PAT (private repos only). Visible in tool-call logs — use a scoped read-only token. Mutually exclusive with git_credential_id.",
+            ),
+          git_credential_id: z
+            .number()
+            .int()
+            .optional()
+            .describe(
+              "ID of an existing stored Portainer git credential (Settings > Git credentials in the Portainer UI) to use instead of username/password — nothing secret transits this call. Mutually exclusive with username/password.",
+            ),
+          confirm_name: z
+            .string()
+            .min(1)
+            .describe(
+              "Must exactly match the source stack's Name. Two-factor confirm.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive (delete-then-create) operation",
+            ),
+        })
+        .strict(),
     },
     async ({
       source_stack_id,
@@ -2041,33 +2103,35 @@ export function registerPortainerTools(
       title: "Portainer: Set / Remove Git Authentication on a Stack",
       description:
         "Add, update, or remove git authentication credentials on an existing git-managed stack — without triggering a redeploy. Use this BEFORE flipping a public source repo to private so subsequent deploys can clone it. Pass username + password to set credentials; pass remove: true to wipe existing credentials. Round-trips the stack's existing env (via noRedact) and AutoUpdate config to avoid Portainer's wipe traps on this endpoint. SECURITY NOTE: the password parameter (PAT / git password) is sent in the tool call and may be visible in tool-call logs — use a scoped read-only PAT that's easy to rotate. After setting auth, do a portainer_redeploy_git_stack to actually exercise the new credentials.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID"),
-        username: z
-          .string()
-          .min(1)
-          .optional()
-          .describe(
-            "Git auth username. For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token' or your GitHub login). Required unless remove=true.",
-          ),
-        password: z
-          .string()
-          .optional()
-          .describe(
-            "Git auth password / Personal Access Token. Visible in tool-call logs — use a scoped read-only token. Required unless remove=true.",
-          ),
-        remove: z
-          .boolean()
-          .optional()
-          .describe(
-            "If true, removes existing git authentication from the stack (wipes saved username + password server-side). When set, omit username and password.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge writing/clearing stored git credentials",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID"),
+          username: z
+            .string()
+            .min(1)
+            .optional()
+            .describe(
+              "Git auth username. For GitHub PAT auth, any non-empty value works (e.g. 'x-access-token' or your GitHub login). Required unless remove=true.",
+            ),
+          password: z
+            .string()
+            .optional()
+            .describe(
+              "Git auth password / Personal Access Token. Visible in tool-call logs — use a scoped read-only token. Required unless remove=true.",
+            ),
+          remove: z
+            .boolean()
+            .optional()
+            .describe(
+              "If true, removes existing git authentication from the stack (wipes saved username + password server-side). When set, omit username and password.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge writing/clearing stored git credentials",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, username, password, remove }) => {
       if (remove === true) {
@@ -2093,37 +2157,39 @@ export function registerPortainerTools(
       title: "Portainer: Set / Remove Stack Env Variables",
       description:
         "Add, update, or remove env variables on an existing stack. Auto-detects file-based vs git-managed and routes to the matching update endpoint, preserving the rest of the env via the noRedact server-side round-trip. Triggers a synchronous redeploy because Portainer can't change container env without restart. `pull_image` (default false) controls only whether the Docker IMAGE is re-pulled — on a GIT-MANAGED stack it does NOT make the call independent of git: Portainer's underlying git-redeploy endpoint always re-pulls from the remote first regardless of this flag, so ANY env change on a git-managed stack requires live git connectivity and fails if the stack's stored git credential is broken (no workaround exists — see docs/PORTAINER-API.md). At least one of `set` or `remove` is required. SECURITY NOTE: any value passed in `set` is visible in the tool-call log (including secret values like API tokens). For setting secrets, accept the trade-off (no other programmatic path) or set them via the Portainer UI.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID"),
-        set: z
-          .array(
-            z.object({
-              name: z.string().min(1),
-              value: z.string(),
-            }),
-          )
-          .optional()
-          .describe(
-            "Env entries to add or update. If a `name` already exists in the stack's env, the value is overwritten; otherwise it's appended.",
-          ),
-        remove: z
-          .array(z.string().min(1))
-          .optional()
-          .describe(
-            "Env variable names to remove from the stack. Names not present in the existing env are silently ignored.",
-          ),
-        pull_image: z
-          .boolean()
-          .optional()
-          .describe(
-            "Pull the latest image as part of the redeploy (default false). Controls the Docker image pull only — on a git-managed stack this does NOT skip the git fetch: Portainer's git-redeploy endpoint always re-pulls from the remote regardless of this flag, so it still requires live git connectivity either way.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge that containers will be restarted",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID"),
+          set: z
+            .array(
+              z.object({
+                name: z.string().min(1),
+                value: z.string(),
+              }),
+            )
+            .optional()
+            .describe(
+              "Env entries to add or update. If a `name` already exists in the stack's env, the value is overwritten; otherwise it's appended.",
+            ),
+          remove: z
+            .array(z.string().min(1))
+            .optional()
+            .describe(
+              "Env variable names to remove from the stack. Names not present in the existing env are silently ignored.",
+            ),
+          pull_image: z
+            .boolean()
+            .optional()
+            .describe(
+              "Pull the latest image as part of the redeploy (default false). Controls the Docker image pull only — on a git-managed stack this does NOT skip the git fetch: Portainer's git-redeploy endpoint always re-pulls from the remote regardless of this flag, so it still requires live git connectivity either way.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge that containers will be restarted",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, set, remove, pull_image }) =>
       asText(
@@ -2141,20 +2207,22 @@ export function registerPortainerTools(
       title: "Portainer: Delete Stack",
       description:
         "Delete a stack — removes the containers, the on-disk ProjectPath, and the Portainer ResourceControl record. HIGH BLAST RADIUS: requires both confirm:true AND confirm_name matching the stack's actual name (two-factor confirmation prevents 'wrong stack id' disasters where the LLM picked the wrong number). Endpoint ID is read from the stack record automatically.",
-      inputSchema: {
-        stack_id: z.number().int().describe("Stack ID to delete"),
-        confirm_name: z
-          .string()
-          .min(1)
-          .describe(
-            "Must exactly match the stack's Name. Two-factor confirm — proves the caller knows which stack they're killing.",
-          ),
-        confirm: z
-          .literal(true)
-          .describe(
-            "Must be exactly true to acknowledge the destructive action",
-          ),
-      },
+      inputSchema: z
+        .object({
+          stack_id: z.number().int().describe("Stack ID to delete"),
+          confirm_name: z
+            .string()
+            .min(1)
+            .describe(
+              "Must exactly match the stack's Name. Two-factor confirm — proves the caller knows which stack they're killing.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive action",
+            ),
+        })
+        .strict(),
     },
     async ({ stack_id, confirm_name }) =>
       asText(await p.deleteStack(stack_id, confirm_name)),
