@@ -1,0 +1,304 @@
+# portainer-mcp
+
+MCP server for Portainer (stacks, containers, endpoints), packaged as a
+Docker container.
+
+## Status
+
+Single source of truth: [STATUS.md](STATUS.md). Do not duplicate status
+into this file, MEMORY.md, or Serena memories — reference STATUS.md.
+
+## Current Sprint
+
+See [STATUS.md](STATUS.md) for the active phase, what's done, and
+what's next.
+
+## Stack
+
+- TypeScript (Node 22+, ESM, `NodeNext` module resolution)
+- `@modelcontextprotocol/sdk` (high-level `McpServer` API)
+- `zod` for tool input schemas
+- Portainer REST API accessed directly via `fetch` (no third-party client)
+- `undici` `Agent` for optional self-signed-cert support
+- Docker multi-stage build (alpine, non-root user `mcp`)
+
+## Layout
+
+- `src/index.ts` — MCP server entry. Reads env vars at startup,
+  decides transport based on `MCP_PORT`. Per-session `McpServer`
+  instances via the `createServer()` factory.
+- `src/portainer.ts` — `PortainerClient` (X-API-Key auth, optional
+  insecure dispatcher for self-signed Portainer certs) +
+  `registerPortainerTools`.
+- `src/util.ts` — `asText()` helper.
+- `Dockerfile` — multi-stage build (alpine, non-root user).
+- `docker-compose.yml` — Compose/Portainer deployment using HTTP transport.
+- `.githooks/pre-commit` — gitleaks + PII pattern scan.
+- `docs/PORTAINER-API.md` — API reference for the deployed Portainer
+  version. Read before adding tools that wrap new endpoints.
+- `docs/specs/portainer.json` — pinned Swagger 2.0 spec snapshot for
+  the deployed Portainer version. Refresh when Portainer is upgraded
+  on the NAS (process documented in `PORTAINER-API.md`).
+
+## When to add a `tools/` layer
+
+Today the structure is flat: `src/portainer.ts` holds the API client
+and the MCP tool registrations. That's idiomatic when each tool is a
+thin wrapper over a single Portainer API call.
+
+**Trigger to refactor:** the first tool that doesn't fit cleanly inline.
+Concretely:
+
+- A tool that **orchestrates across multiple Portainer resources** —
+  e.g. "redeploy all stacks whose images are stale" (list stacks +
+  inspect each + redeploy). That doesn't belong inside the client.
+- A tool that does **non-trivial composition** of multiple API calls —
+  filtering, ranking, cross-referencing.
+
+When that arrives, pull tool registrations out into
+`src/tools/<descriptive-name>.ts`. Don't pre-split.
+
+## Transport modes
+
+The same image supports two transports, selected at start time:
+
+- **stdio (default)** — used when `MCP_PORT` is unset. Server reads
+  MCP wire from stdin and writes to stdout. Standard mode for
+  `docker run -i` invocation by an MCP client.
+- **HTTP (Streamable HTTP)** — used when `MCP_PORT` is set to a port
+  number. Server listens on `0.0.0.0:$MCP_PORT` with two endpoints:
+  - `POST/GET/DELETE /mcp` — MCP Streamable HTTP per spec; per-session
+    `mcp-session-id` header.
+  - `GET /health` — liveness probe (used by docker healthcheck).
+
+  Per-session `McpServer` instances via `createServer()`; the
+  `PortainerClient` is module-scope (no per-session state).
+
+## Common Commands
+
+```bash
+npm install            # install deps
+npm run build          # tsc → dist/
+npm run dev            # tsx src/index.ts (requires PORTAINER_URL, PORTAINER_API_KEY)
+npm run typecheck      # tsc --noEmit
+npm run lint           # eslint .
+npm run format         # prettier --write .
+docker build -t portainer-mcp .
+```
+
+## Conventions
+
+- All logging goes to **stderr** (`console.error`). stdout is the MCP
+  wire protocol — writing to it corrupts the transport.
+- Tool names: `portainer_<verb_noun>` (e.g. `portainer_list_stacks`).
+  Always snake_case.
+- Tool inputs validated with `zod`. Outputs returned as a single
+  JSON-stringified text content block via `asText()`.
+- Auth via env vars `PORTAINER_URL` + `PORTAINER_API_KEY`. The
+  container is stateless; the API key never lands on disk in the image.
+- HTTP mode has **no MCP auth** — bind only to private networks.
+- **Secrets in upstream responses are redacted before returning to
+  MCP callers.** Portainer's `/api/stacks` and `/api/stacks/{id}` (and
+  the Docker `inspect` proxy at
+  `/api/endpoints/{id}/docker/containers/{id}/json`) return the full
+  `Env` arrays with values in plaintext. `PortainerClient.request<T>()`
+  runs the `redactSecrets` walker on every JSON response: any property
+  named `Env`/`env` (case-insensitive) whose value is an array gets
+  scrubbed. Two parallel detection paths — an entry is redacted if
+  EITHER fires:
+  - **Key-name match.** Env keys matching
+    `(?i)(password|passwd|secret|token|api[_-]?key|access[_-]?key|key$|jwt|bearer|credential|dsn|url|uri|conn|pwd?$)`
+    have their values replaced with `<redacted>`; keys are never
+    altered. The `url|uri|conn` tokens cover connection strings
+    (`DATABASE_URL`, `MONGO_URI`, `PG_CONN`) that commonly inline
+    credentials.
+  - **Value-shape match.** Even when the key name doesn't telegraph
+    "secret" (e.g. `BOTIFY_JWT`, `SESSION_DATA`), the value is
+    redacted if it matches one of `SECRET_VALUE_PATTERNS` —
+    high-confidence issuer prefixes that don't appear in non-secret
+    values: JWT (`eyJ...`), GitHub PATs (`ghp_`, `github_pat_`),
+    Stripe (`sk_live_`, `pk_test_`, etc.), Anthropic / OpenAI
+    (`sk-`, `sk-ant-`), Slack (`xox[baprs]-`), AWS (`AKIA`, `ASIA`),
+    Google (`AIza`), PEM `-----BEGIN ... PRIVATE KEY-----`
+    markers, and URLs with inline credentials
+    (`scheme://user:pass@host`). We deliberately avoid generic
+    entropy/length thresholds
+    because UUIDs, content hashes, and Docker container IDs would
+    false-positive — config the LLM legitimately needs to read.
+
+  Handles both wire shapes — Portainer's `[{Name, Value}, …]` (or
+  lowercase) and Docker inspect's `["KEY=VALUE", …]`.
+
+  **Architectural invariant — don't bypass `request<T>()`.** The
+  redactor lives in the JSON branch of `request<T>()`. Any new client
+  method that calls `fetch` directly skips the redactor silently. If
+  you need special handling (binary body, streaming, non-JSON
+  content type) extend `request<T>()` rather than adding a parallel
+  fetch path. The current exception is `containerLogs`, which goes
+  through `request<T>()` but takes the text branch — logs are
+  app-controlled output, not config, and aren't expected to contain
+  structured secrets.
+
+  **Opt-out for round-trip writes — `{ noRedact: true }`.**
+  `request<T>()` accepts an optional `{ noRedact: true }` flag that
+  skips the JSON redactor. Use it ONLY when the response is fed
+  immediately into another API call and never returned to an MCP
+  caller — e.g. `redeployStack` GETs the stack with `noRedact: true`
+  so it can PUT the real env back (the affected stack-update
+  endpoints unconditionally assign `stack.Env = payload.Env`, so
+  posting the redacted shape would wipe the real secrets — see
+  [PORTAINER-API.md](docs/PORTAINER-API.md) "Env round-trip is
+  required"). A single `grep -rn "noRedact: true" src/` should find
+  every callsite — security review checks that each one is a true
+  internal round-trip, never a path that reaches the MCP wire.
+
+  **Known limitation:** `portainer_get_stack` returns
+  `StackFileContent` (raw compose YAML). The redactor only scrubs
+  structured `Env` arrays, not arbitrary YAML — so secrets inlined
+  in compose files (rather than referenced via `${VAR}`) will still
+  surface. Use stack-level env vars + `${VAR}` references in compose
+  to stay covered. See STATUS.md Known Gaps.
+
+  **Stack `Webhook` field (2026-08-19).** A stack's `Webhook` property
+  is a UUID that triggers an unauthenticated public redeploy
+  (`POST /stacks/webhooks/{id}` — see [PORTAINER-API.md](docs/PORTAINER-API.md)
+  "Webhooks are public"). It's a bearer token, not a display value, but
+  it's a top-level scalar field, not an `Env` array entry, so it sat
+  outside the redactor's scope until now — `portainer_list_stacks` and
+  `portainer_get_stack` were returning it in plaintext. `redactSecrets`
+  now special-cases any key named `webhook` (case-insensitive, at any
+  nesting depth) the same way it special-cases `env`: a non-empty
+  string value becomes `<redacted>`; an empty string (no webhook
+  configured) isn't secret and passes through unchanged, so callers can
+  still tell whether a stack has one enabled.
+
+  **Comparing two redacted secrets — `portainer_compare_env_values`
+  (2026-08-19).** Redaction is correct but creates its own gap: two
+  services that are supposed to share a value (e.g. a shared bearer
+  token) can't be checked for equality by eyeballing two
+  `portainer_get_container`/`portainer_get_stack` results, since both
+  show `<redacted>` regardless of whether the underlying values match.
+  This tool fetches both raw values server-side (`noRedact`), hashes
+  them (SHA-256, constant-time compare), and returns only
+  `match: true/false` plus `found`/`empty` flags per side — never the
+  values, never a hash. Deliberately stateless (no hash is stored) to
+  match this codebase's existing stateless design — see STATUS.md
+  "Design Principles" for why a store-hash-at-write-time variant was
+  considered and rejected in favor of this on-demand version.
+
+- **Secrets in tool INPUTS, not just outputs.** The redactor above
+  protects responses Portainer returns to us; it does NOT protect
+  secrets the user passes INTO tools as parameters. Three existing
+  tools accept a credential param (`portainer_set_git_auth`,
+  `portainer_create_git_stack`, `portainer_convert_stack_to_git` —
+  all take an optional `password` for git auth). Anything passed to
+  these lands in the conversation transcript, tool-call log, and any
+  session persistence (Codex Desktop history, OpenChronicle, etc.).
+  The Portainer UI's password field is more ephemeral than chat.
+  Therefore: **prefer the Portainer UI for credential rotation**,
+  use these tools sparingly with scoped easy-to-rotate PATs, and
+  **don't add new tools that take secrets as input by default**
+  (e.g. registry credential update, named git credential CRUD —
+  keep those as UI operations). See STATUS.md "Design Principles"
+  for the full reasoning.
+  - **Better option for `create_git_stack` / `convert_stack_to_git`:
+    `git_credential_id` (2026-08-19).** Both tools now accept an
+    optional `git_credential_id`, referencing an existing credential
+    stored in Portainer (Settings > Git credentials), as an
+    alternative to `username`/`password`. Nothing secret transits
+    the tool call at all — the credential lives server-side in
+    Portainer, referenced only by its numeric id. Mutually exclusive
+    with `username`/`password`; both client methods validate this
+    up front (before `convertStackToGit`'s delete step, specifically,
+    so a bad combination refuses cleanly instead of deleting the
+    source first). Wire field is `RepositoryGitCredentialID`
+    (PascalCase, matches the read-side `GitConfig.Authentication.
+    GitCredentialID` shape) — confirmed by reading Portainer's own
+    served frontend bundle and live-verified against CE 2.39.6 with
+    a throwaway create-stack call using a deliberately nonexistent
+    compose path (so no container could ever be created regardless
+    of outcome). No portainer-mcp tool currently lists available
+    credential ids — the caller needs to know the id from the
+    Portainer UI (Settings > Git credentials) today.
+
+## Self-signed certs
+
+Home Portainer setups commonly use self-signed certs on port 9443.
+Set `PORTAINER_VERIFY_TLS=false` in the env to skip cert verification.
+Implementation uses `undici.Agent({ connect: { rejectUnauthorized: false } })`
+as the per-request `dispatcher` — surgical, doesn't affect other fetches.
+Default is to verify (secure default).
+
+## Tool surface
+
+26 tools registered in `src/portainer.ts` — 11 read tools (endpoints,
+stacks, containers, logs, volumes, images, system status, env-value
+comparison) and 15 write tools (container start/stop/restart/kill/
+recreate; stack create/update/env/redeploy/git-convert/delete; git
+auth; image prune). The v1 "read-only initial scope" is history — see
+STATUS.md for the authoritative per-tool chronology and the README for
+the current tool table.
+
+Write tools have real blast radius (`portainer_delete_stack` removes a
+stack and all its containers; `portainer_container_kill` is SIGKILL).
+Tool descriptions should make severity explicit so MCP clients can
+prompt for confirmation appropriately.
+
+**Auto-prune on redeploy/recreate.** `portainer_redeploy_stack`,
+`portainer_update_stack_file`, `portainer_redeploy_git_stack`, and
+`portainer_recreate_container` each call `pruneDanglingAfterRedeploy`
+(`PortainerClient`) once their main call succeeds, and merge the result
+onto the response as `imagePrune` via `withImagePrune`. This is the
+actual answer to "clean up orphaned images" — it targets the moment an
+image digest actually becomes orphaned (a redeploy swapping the tag to
+a new digest), not a time-based schedule. Always dangling-only (never
+`allUnused`); the aggressive mode stays an explicit, separately-
+confirmed call to `portainer_prune_images`. A prune failure is caught
+and reported in `imagePrune.error` rather than failing the redeploy
+that already succeeded — the redeploy is the thing that matters here.
+Known gap: a stack redeploy triggered by Portainer's own git-auto-update
+polling (no MCP call involved) doesn't go through these tools, so it
+isn't covered by this mechanism.
+
+**Second known gap — self-redeploy (confirmed live 2026-08-18).**
+Redeploying portainer-mcp's *own* stack doesn't get the auto-prune: the
+redeploy replaces the very container whose process is handling that
+request, and the process is killed as part of the swap before it reaches
+the `pruneDanglingAfterRedeploy` call — same root cause as the
+documented in-flight-connection-drop quirk on these tools' descriptions.
+Redeploying any *other* stack is unaffected (that calling process stays
+alive to finish the request). Mitigation: after a portainer-mcp
+self-redeploy, follow up with one manual `portainer_prune_images` call.
+See STATUS.md for the live-verified details.
+
+## Testing
+
+- `npm test` — `node --test` (via tsx) over `test/*.test.ts`.
+  Currently `test/redact.test.ts`: table-driven unit tests for the
+  `redactSecrets` scrubber (pure function, no mocking involved).
+- For anything that talks to Portainer, prefer integration tests
+  against a real instance behind env-gated tests (don't mock — see
+  working-style note about mocked-vs-real divergence).
+
+## MCP tooling (local workstation)
+
+This repo's Codex sessions use two MCP servers:
+
+- **Serena** — user-scoped (available in every project on this machine).
+  Project memories are written under the `portainer-mcp` Serena project.
+- **OpenChronicle** — user-scoped HTTP transport pointing at the NAS
+  deployment at `http://your-nas:18000/mcp/` (Portainer stack 151,
+  image `ghcr.io/carldog/openchronicle-mcp`). One container, one DB,
+  shared across every project. The trailing slash on `/mcp/` matters —
+  the server 307-redirects without it. Register with:
+  `Codex mcp add --transport http --scope user openchronicle http://your-nas:18000/mcp/`.
+
+**Do not run a local `oc serve` or save via the local `oc` CLI.** The
+local binary still exists on the workstation but its SQLite DB is not
+authoritative — anything written there is invisible to MCP tools and
+to other workstations. NAS-only is the rule.
+
+The project_id for this repo on the NAS OC is
+`5e12a080-0f4d-405c-a2c6-86026f6aae49`. `memory_save` calls must pass
+that as `project_id` (FK; freeform strings fail). `project_list` lookup
+by name is the resilient way to resolve it if the ID drifts.
