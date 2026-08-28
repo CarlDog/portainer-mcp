@@ -201,3 +201,5 @@ PORTAINER_URL=... PORTAINER_API_KEY=... PORTAINER_VERIFY_TLS=false npm run dev
 - HTTP transport enforces a Host/Origin allowlist (`MCP_ALLOWED_HOSTS`) by
   default, with optional bearer auth (`MCP_AUTH_TOKEN`) as a second layer —
   see "Transport modes" above.
+- Found a vulnerability? See [SECURITY.md](SECURITY.md) for how to
+  report it privately.

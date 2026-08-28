@@ -1,11 +1,27 @@
 # Status
 
-**Last updated:** 2026-08-28 — **v0.8.0**, a same-day follow-up to v0.7.0
-below. Closes the remaining known gaps from that pass (container_logs
-since/until, containerChanges diff, the remove_orphans investigation ->
-pruneWarning, recreate_container's timeout risk -> portainer_pull_image),
-then a phase-end audit that split `src/portainer.ts` into `src/tools/*.ts`
-and deduplicated several internals. Tool count 30 → 31.
+**Last updated:** 2026-08-28 — **v0.8.3**, the end of a long single-day
+arc from v0.7.0 below. In order: **v0.8.0** closed the remaining known
+gaps from the v0.7.0 pass (container_logs since/until, containerChanges
+diff, the remove_orphans investigation -> pruneWarning, recreate_container's
+timeout risk -> the new `portainer_pull_image` tool; tool count 30 → 31);
+then a **phase-end audit** (9-category workflow, ~30 findings triaged)
+split `src/portainer.ts` into `src/tools/*.ts`, deduplicated several
+self-acknowledged/correctness-risk spots, added `SECURITY.md`, and ran
+a first-ever full-history `gitleaks` sweep (0 leaks); then **v0.8.1 →
+v0.8.3** worked through the three majors Dependabot PR #11 had bundled
+together, one at a time, each researched before touching anything: zod
+3→4 (v0.8.1, the "blocked on the SDK" reasoning that closed a prior PR
+was stale), undici 6→8 (v0.8.2, `allowH2:false` pinned to avoid an
+untested behavior change on the self-signed-cert path with real
+incident history), and express 4→5 (v0.8.3, one required fix to the
+`listen()` callback's changed error-handling semantics). TypeScript
+5→7 stays deliberately deferred — see "Next" below for the exact gate.
+Also merged Dependabot PR #10 (GitHub Actions bump) and fixed a
+standing label-config gap. Tool count ends the day at 31; test count
+at 161 (was 123 right before the v0.8.0 follow-ups began — v0.7.0
+itself started from a lower count still; see the Done log below for
+each step's exact before/after).
 
 **v0.7.0** closed 7 accumulated `mcp-feedback` OpenChronicle memories (the
 dogfooding backlog) in one pass. Tool count 26 → 30:

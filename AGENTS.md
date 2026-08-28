@@ -15,11 +15,16 @@ what's next.
 
 ## Stack
 
-- TypeScript (Node 22+, ESM, `NodeNext` module resolution)
+- TypeScript (Node 22.19+, ESM, `NodeNext` module resolution)
 - `@modelcontextprotocol/sdk` (high-level `McpServer` API)
-- `zod` for tool input schemas
-- Portainer REST API accessed directly via `fetch` (no third-party client)
-- `undici` `Agent` for optional self-signed-cert support
+- `zod` for tool input schemas (v4)
+- Portainer REST API accessed via `undici`'s own `request()` — never
+  global `fetch`, which is served by Node's own bundled undici copy
+  and can silently ignore a dispatcher built from the standalone npm
+  `undici` package (see "Conventions" below and `test/transport.test.ts`)
+- `undici` `Agent`, always explicitly constructed (not just for the
+  self-signed-cert case — see `PortainerClient`'s constructor) with
+  `allowH2: false` pinned
 - Docker multi-stage build (alpine, non-root user `mcp`)
 
 ## Layout
@@ -166,6 +171,19 @@ docker build -t portainer-mcp .
   JSON-stringified text content block via `asText()`.
 - Auth via env vars `PORTAINER_URL` + `PORTAINER_API_KEY`. The
   container is stateless; the API key never lands on disk in the image.
+- **`PortainerClient.request<T>()` must call undici's own `request()`,
+  never global `fetch`.** Node's global `fetch` is served by the undici
+  copy bundled inside Node itself; an `Agent` constructed from the
+  standalone npm `undici` package belongs to a different module
+  instance, so `fetch`'s `dispatcher` option can silently be ignored —
+  dropping `connect.rejectUnauthorized: false` and breaking every call
+  to a self-signed Portainer with a bare "fetch failed". This is not
+  hypothetical: the node:22-alpine → node:26-alpine base-image bump
+  tripped exactly this in production. `test/transport.test.ts` guards
+  it at the source level (asserts no `fetch(` call, asserts
+  `undiciRequest(` is used); `test/tls-dispatcher.test.ts` guards the
+  same invariant at the behavioral level, against a real self-signed
+  TLS server.
 - HTTP mode enforces a **Host/Origin allowlist** by default
   (`MCP_ALLOWED_HOSTS`) and supports optional **bearer auth**
   (`MCP_AUTH_TOKEN`) — see "Transport modes" above. Binding to a
@@ -362,12 +380,20 @@ See STATUS.md for the live-verified details.
 
 ## Testing
 
-- `npm test` — `node --test` (via tsx) over `test/*.test.ts`. One file
-  per pure-function area (`redact`, `containers`, `env-compare`,
+- `npm test` — `node --test` (via tsx) over `test/*.test.ts`, 14 files.
+  Thirteen are table-driven unit tests against pure functions extracted
+  from the client/tool layer (`redact`, `containers`, `env-compare`,
   `images`, `http-transport`, `env-warnings`, `compact-projections`,
   `demux-logs`, `container-changes`, `prune-warning`, `pull-progress`,
-  `transport`, `version-sync`) — table-driven unit tests against pure
-  functions extracted from the client/tool layer, no mocking involved.
+  `transport`, `version-sync`), no mocking involved. `tls-dispatcher` is
+  the one exception in kind: it spins up a real self-signed HTTPS
+  server (cert generated at runtime via the `selfsigned` devDependency,
+  nothing committed) and drives the actual `PortainerClient` against
+  it, proving the undici dispatcher wiring is genuinely honored
+  end-to-end — a source-level assertion can't catch a dependency-major
+  bump changing how Agent options map onto a real TLS handshake, which
+  is exactly the regression class `transport.test.ts` exists to guard
+  against at the source level.
 - For anything that talks to Portainer, prefer integration tests
   against a real instance behind env-gated tests (don't mock — see
   working-style note about mocked-vs-real divergence).
