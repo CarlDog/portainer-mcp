@@ -58,6 +58,7 @@ itself, no separate call or schedule needed.
 | `portainer_container_restart` | Restart a container |
 | `portainer_container_kill` | SIGKILL a container (not graceful) |
 | `portainer_container_delete` | Delete a container (irreversible; force=true to delete a running one) |
+| `portainer_delete_volume` | Permanently delete one exact dangling volume (irreversible; two-factor name confirmation; never forced) |
 | `portainer_recreate_container` | Recreate a container (optionally re-pull image); auto-prunes dangling images after |
 | `portainer_pull_image` | Pull an image without touching any container — use before a recreate/redeploy on a large image to avoid a client timeout landing on the destructive step |
 | `portainer_create_stack` | Create a new compose stack from a file body |

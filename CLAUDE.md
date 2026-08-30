@@ -61,10 +61,10 @@ what's next.
 **Split by resource (2026-08-28).** `src/portainer.ts` had grown to
 ~3000 lines (pure helpers + `PortainerClient` + 31 inline tool
 registrations); the file-size finding from the 2026-08-19 phase-end
-audit was the trigger. All 31 `server.registerTool(...)` calls moved
+audit was the trigger. All 32 `server.registerTool(...)` calls live
 into six `src/tools/<resource>.ts` files — `stacks.ts` (11 tools,
 ~590 lines), `containers.ts` (10, ~385), `images.ts` (3, ~75),
-`networks.ts` (3, ~80), `volumes.ts` (2, ~60), `system.ts` (2, ~45).
+`networks.ts` (3, ~80), `volumes.ts` (3, ~110), `system.ts` (2, ~45).
 Each exports a single `register<Resource>Tools(server, p)`, called
 from `registerPortainerTools` in `src/portainer.ts` — that function is
 now a thin orchestrator, not a 1200-line body. `PortainerClient`, the
@@ -323,16 +323,17 @@ Default is to verify (secure default).
 
 ## Tool surface
 
-31 tools registered across `src/tools/{stacks,containers,images,networks,volumes,system}.ts`
+32 tools registered across `src/tools/{stacks,containers,images,networks,volumes,system}.ts`
 (see "Tool registration layout" above) — 13 read tools (endpoints,
 stacks, containers, logs, volumes, networks, images, system status,
-env-value comparison) and 18 write tools (container start/stop/restart/
-kill/delete/recreate; image pull; stack create/update/env/redeploy/git-convert/
-delete; git auth; image and network prune). The v1 "read-only initial
+env-value comparison) and 19 write tools (container start/stop/restart/
+kill/delete/recreate; exact dangling-volume delete; image pull; stack
+create/update/env/redeploy/git-convert/delete; git auth; image and network
+prune). The v1 "read-only initial
 scope" is history — see STATUS.md for the authoritative per-tool
 chronology and the README for the current tool table.
 
-**All 31 tool `inputSchema`s enforce `.strict()`** — an unknown or
+**All 32 tool `inputSchema`s enforce `.strict()`** — an unknown or
 misspelled input key is rejected with a clear "unrecognized key" error
 at the MCP validation layer instead of being silently stripped (zod's
 default raw-shape behavior) and surfacing later as a confusing

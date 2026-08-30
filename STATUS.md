@@ -1,7 +1,12 @@
 # Status
 
-**Last updated:** 2026-08-28 — **v0.8.3**, the end of a long single-day
-arc from v0.7.0 below. In order: **v0.8.0** closed the remaining known
+**Last updated:** 2026-08-30 — **post-v0.8.3 dogfooding follow-up.** Added
+`portainer_delete_volume`, closing the exact cleanup handoff that the read-only
+volume surface could identify but not finish. Current tool count is 32; test
+count is 167.
+
+**v0.8.3** was the end of a long single-day arc from v0.7.0 below. In order:
+**v0.8.0** closed the remaining known
 gaps from the v0.7.0 pass (container_logs since/until, containerChanges
 diff, the remove_orphans investigation -> pruneWarning, recreate_container's
 timeout risk -> the new `portainer_pull_image` tool; tool count 30 → 31);
@@ -18,7 +23,7 @@ incident history), and express 4→5 (v0.8.3, one required fix to the
 `listen()` callback's changed error-handling semantics). TypeScript
 5→7 stays deliberately deferred — see "Next" below for the exact gate.
 Also merged Dependabot PR #10 (GitHub Actions bump) and fixed a
-standing label-config gap. Tool count ends the day at 31; test count
+standing label-config gap. Tool count ended that day at 31; test count
 at 161 (was 123 right before the v0.8.0 follow-ups began — v0.7.0
 itself started from a lower count still; see the Done log below for
 each step's exact before/after).
@@ -270,8 +275,9 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   `assertFileBasedStack` helper that both methods now share — light
   tidy, behavior unchanged. No tests yet (project-wide gap, see
   Next).
-- **Volume read tools: `portainer_list_volumes` +
-  `portainer_inspect_volume` (2026-05-02).** Read-only audit
+- **Volume lifecycle tools: `portainer_list_volumes`,
+  `portainer_inspect_volume`, and `portainer_delete_volume`.** The two read
+  tools (2026-05-02) provide the audit
   surface for the orphan-volume-accumulation problem. `list_volumes`
   wraps `GET /api/endpoints/{id}/docker/volumes` and exposes
   Docker's filter API (`dangling: true` for unused-only,
@@ -279,10 +285,13 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   `inspect_volume` wraps `GET /volumes/{name}` for detail
   (Mountpoint host path, Labels including the Compose project
   label that maps back to a stack name, CreatedAt). Designed for
-  "audit unused volumes via Claude" workflows — surfaces what's
-  in the UI's Volumes page without hunting. Pure reads, zero risk.
-  Prune (`POST /volumes/prune`) deliberately not built —
-  auto-removal of "unused" stateful storage is dangerous (Docker's
+  "audit unused volumes via Claude" workflows and surface what's
+  in the UI's Volumes page without hunting. `delete_volume` (2026-08-30)
+  closes the dogfooded manual-handoff gap for one proven-dead volume while
+  keeping a refusal-first contract: exact name, two-factor confirmation,
+  fresh dangling check, and no force option. Bulk prune
+  (`POST /volumes/prune`) remains deliberately unbuilt — auto-removal of
+  "unused" stateful storage is dangerous (Docker's
   definition of "unused" includes brief stack-redeploy windows
   where containers detach temporarily). Manual cleanup via UI or
   CLI remains the safer pattern.

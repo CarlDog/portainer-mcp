@@ -914,6 +914,33 @@ export class PortainerClient {
     );
   }
 
+  async deleteVolume(
+    endpointId: number,
+    volumeName: string,
+    confirmName: string,
+  ): Promise<unknown> {
+    const inspected = await this.inspectVolume(endpointId, volumeName);
+    const dangling = await this.listVolumes(endpointId, {
+      dangling: true,
+      name: volumeName,
+    });
+    assertVolumeDeletionSafe(volumeName, confirmName, inspected, dangling);
+
+    // Never pass force=true. Docker rechecks attachment state atomically at
+    // deletion time and returns a conflict if a container attached after our
+    // dangling snapshot, closing the check/delete race without data loss.
+    await this.request(
+      "DELETE",
+      `/api/endpoints/${endpointId}/docker/volumes/${encodeURIComponent(volumeName)}`,
+    );
+    return {
+      ok: true,
+      action: "delete",
+      volume_name: volumeName,
+      endpoint_id: endpointId,
+    };
+  }
+
   async listNetworks(
     endpointId: number,
     filters?: { dangling?: boolean; name?: string },
@@ -1914,6 +1941,59 @@ export class PortainerClient {
       name: stack.Name,
       endpoint_id: stack.EndpointId,
     };
+  }
+}
+
+export function assertVolumeDeletionSafe(
+  volumeName: string,
+  confirmName: string,
+  inspectedValue: unknown,
+  danglingValue: unknown,
+): void {
+  if (
+    typeof inspectedValue !== "object" ||
+    inspectedValue === null ||
+    Array.isArray(inspectedValue) ||
+    typeof (inspectedValue as Record<string, unknown>).Name !== "string"
+  ) {
+    throw new Error(
+      "Portainer returned a malformed volume inspection; refusing to delete",
+    );
+  }
+  const inspectedName = (inspectedValue as { Name: string }).Name;
+  if (inspectedName !== volumeName) {
+    throw new Error(
+      `Requested volume "${volumeName}" resolved to "${inspectedName}"; refusing to delete`,
+    );
+  }
+  if (inspectedName !== confirmName) {
+    throw new Error(
+      `Name mismatch: volume is "${inspectedName}", caller supplied confirm_name="${confirmName}". Refusing to delete.`,
+    );
+  }
+  if (
+    typeof danglingValue !== "object" ||
+    danglingValue === null ||
+    Array.isArray(danglingValue) ||
+    !Array.isArray((danglingValue as Record<string, unknown>).Volumes)
+  ) {
+    throw new Error(
+      "Portainer returned a malformed dangling-volume list; refusing to delete",
+    );
+  }
+  const isExactlyDangling = (
+    danglingValue as { Volumes: unknown[] }
+  ).Volumes.some(
+    (volume) =>
+      typeof volume === "object" &&
+      volume !== null &&
+      !Array.isArray(volume) &&
+      (volume as Record<string, unknown>).Name === inspectedName,
+  );
+  if (!isExactlyDangling) {
+    throw new Error(
+      `Volume "${inspectedName}" is not currently dangling (unused). It may be attached to a container or its state may have changed; refusing to delete.`,
+    );
   }
 }
 

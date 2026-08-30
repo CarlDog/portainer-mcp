@@ -13,6 +13,15 @@ rather than after the fact.
 
 ## [Unreleased]
 
+### Added
+
+- Added `portainer_delete_volume`, closing a dogfooded cleanup gap without
+  exposing Docker's broad volume-prune operation. The tool requires
+  `confirm: true` plus an exact `confirm_name`, re-inspects the volume and
+  verifies an exact match in Docker's current dangling list before deletion,
+  never passes `force=true`, and therefore retains Docker's atomic final
+  attachment check as a race-condition backstop.
+
 ## [0.8.3] - 2026-08-28
 
 ### Changed

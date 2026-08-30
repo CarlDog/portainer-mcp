@@ -56,4 +56,35 @@ export function registerVolumeTools(
     async ({ endpoint_id, volume_name }) =>
       asText(await p.inspectVolume(endpoint_id, volume_name)),
   );
+
+  server.registerTool(
+    "portainer_delete_volume",
+    {
+      title: "Portainer: Delete Volume",
+      description:
+        "Permanently delete one exact Docker volume. HIGH BLAST RADIUS AND IRREVERSIBLE: all data in the volume is lost. Refuses any volume that is not currently dangling (unused), requires confirm: true plus an exact confirm_name, never force-deletes, and relies on Docker's final attachment check to close races. Inspect the volume first and prefer a backup when the data may matter. Bulk volume pruning is intentionally not exposed because dangling volumes can be deliberate backups.",
+      inputSchema: z
+        .object({
+          endpoint_id: z.number().int().describe("Endpoint ID"),
+          volume_name: z
+            .string()
+            .min(1)
+            .describe("Exact volume name from portainer_list_volumes"),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge permanent volume data loss",
+            ),
+          confirm_name: z
+            .string()
+            .min(1)
+            .describe(
+              "Must exactly match volume_name as a second confirmation",
+            ),
+        })
+        .strict(),
+    },
+    async ({ endpoint_id, volume_name, confirm_name }) =>
+      asText(await p.deleteVolume(endpoint_id, volume_name, confirm_name)),
+  );
 }
