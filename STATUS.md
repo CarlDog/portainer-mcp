@@ -1332,15 +1332,19 @@ None active. Decisions made during scaffolding:
     succeeded before failing cleanly on the intentional bad path, zero
     orphaned state). See CLAUDE.md "Secrets in tool INPUTS" for the
     field-level detail.
-  - **Still open:** pre-flight-checking repo reachability/auth
-    *before* deleting the source stack in `convert_stack_to_git`,
-    converting a bad-repo-URL or truly-missing-credential case from an
-    outage into a clean refusal (mirrors the existing name-collision
-    pre-flight on `create_stack`/`create_git_stack`). Lower priority
-    now that `git_credential_id` removes the most common way to hit
-    this in practice, but the underlying delete-before-create
-    ordering is still there for other failure modes (bad ref, bad
-    compose path, network blip).
+  - **Done 2026-08-30: repository-file preflight before delete.**
+    `convert_stack_to_git` now calls the read-only
+    `POST /api/gitops/repo/file/preview` endpoint after validating the
+    source and two-factor confirmation but before fetching recovery
+    YAML or deleting anything. Bad repo URLs, refs, compose paths, and
+    credentials now refuse while the source is intact. Portainer 2.39.7
+    was live-probed to confirm the endpoint accepts the stored-credential
+    shape `gitCredentialID`, so private-repo conversions remain secret-free.
+    A behavioral regression test asserts a rejected preview causes no
+    recovery-file read and no DELETE. Residual risk remains honest:
+    malformed Compose, deployment failures, and a post-preview network
+    race can still fail after the source deletion, so the recovery payload
+    and self-conversion warning remain required.
   See OC memory `ed84beab-5398-4142-a032-cdd27a60bd70` (incident) and
   `d6baf633-1609-4a0d-b097-f6a28999691d` (git-credential-ID
   resolution) for full detail.

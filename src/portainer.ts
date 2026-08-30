@@ -1484,6 +1484,52 @@ export class PortainerClient {
     );
   }
 
+  private async assertGitRepositoryFileReachable(
+    sourceName: string,
+    spec: {
+      repositoryUrl: string;
+      referenceName?: string;
+      composePath?: string;
+      username?: string;
+      password?: string;
+      gitCredentialId?: number;
+    },
+  ): Promise<void> {
+    const body: Record<string, unknown> = {
+      repository: spec.repositoryUrl,
+      reference: spec.referenceName ?? "refs/heads/main",
+      targetFile: spec.composePath ?? "docker-compose.yml",
+      TLSSkipVerify: false,
+    };
+    if (spec.gitCredentialId !== undefined) {
+      // Live-verified against Portainer 2.39.7: the preview endpoint uses
+      // lower-camel gitCredentialID, unlike create-stack's PascalCase
+      // RepositoryGitCredentialID field.
+      body.authorizationType = 0;
+      body.gitCredentialID = spec.gitCredentialId;
+    } else if (spec.username !== undefined || spec.password !== undefined) {
+      body.authorizationType = 0;
+      body.username = spec.username ?? "";
+      body.password = spec.password ?? "";
+    }
+
+    try {
+      await this.request(
+        "POST",
+        "/api/gitops/repo/file/preview",
+        undefined,
+        body,
+      );
+    } catch (previewErr) {
+      const message =
+        previewErr instanceof Error ? previewErr.message : String(previewErr);
+      throw new Error(
+        `Git repository preflight failed before stack "${sourceName}" was changed: ${message}`,
+        { cause: previewErr },
+      );
+    }
+  }
+
   async convertStackToGit(
     sourceStackId: number,
     spec: {
@@ -1543,6 +1589,11 @@ export class PortainerClient {
         `Name mismatch: stack ${sourceStackId} is "${source.Name}", caller supplied confirm_name="${spec.confirmName}". Refusing to convert. Re-call with the correct name.`,
       );
     }
+    // Prove the repository, ref, target compose path, and credentials work
+    // while the source stack still exists. This does not validate Compose
+    // semantics and cannot eliminate a later network race, but it closes the
+    // known delete-first outage path for bad repository inputs.
+    await this.assertGitRepositoryFileReachable(source.Name, spec);
     // Capture the source compose content for a recovery payload if the
     // create step fails after delete. Best-effort — proceed if it fails.
     let composeContent = "";
