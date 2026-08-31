@@ -518,7 +518,7 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   store. The shipped on-demand version needs no storage, no TTL, and
   fully solves the equality-check case that actually came up (the
   2026-08-05 KINDROID_MCP_TOKEN mismatch, and 2026-08-19's "does this
-  new plex-companion token match kindroid-mcp's" question). Revisit
+  new watch-companion token match kindroid-mcp's" question). Revisit
   drift detection separately if a real need for it shows up.
 
 - **`portainer_set_stack_env` on a git-managed stack: honest docs +
@@ -569,7 +569,7 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   Session Management §3/§4) to re-initialize; the old 400 read as a
   generic protocol error and left the client wedged until a human
   restarted it. `test/http-transport.test.ts` (8 new cases, ported from
-  plex-companion's vitest suite to this repo's `node --test`) enforces
+  watch-companion's vitest suite to this repo's `node --test`) enforces
   the 401/403/404 behaviors directly — 85/85 total. New `MCP_BIND_HOST`
   env var (default `127.0.0.1`; `docker-compose.yml` sets `0.0.0.0`,
   required wiring for the published port to work at all, matching
@@ -1054,7 +1054,7 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   to silently corrupt state.
 - ~~Smoke-test `portainer_convert_stack_to_git` against the live
   NAS once the new image ships.~~ **Done 2026-08-19**, twice over: a
-  real (non-self) conversion of plex-companion first surfaced the
+  real (non-self) conversion of watch-companion first surfaced the
   private-repo atomicity gap (see Done log — the incident that led to
   `git_credential_id`), then a clean retry with `git_credential_id: 1`
   succeeded fully — new stack, git-managed, secrets retained via the
@@ -1305,7 +1305,7 @@ None active. Decisions made during scaffolding:
   the orphan cleanup as part of the convert error path.
 - **`portainer_convert_stack_to_git`'s delete-then-create atomicity
   risk is not limited to self-conversion — confirmed live 2026-08-19
-  on plex-companion (stack 168, private repo, no credentials
+  on watch-companion (stack 168, private repo, no credentials
   passed).** The tool's own docstring only warned about converting
   portainer-mcp's *own* stack (the process dies mid-call). It did
   NOT warn that ANY stack pointing at a private repo, called without

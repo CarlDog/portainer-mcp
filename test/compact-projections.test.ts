@@ -11,14 +11,11 @@ describe("filterStacksByName", () => {
   const stacks = [
     { Id: 1, Name: "plex-mcp" },
     { Id: 2, Name: "servarr-mcp" },
-    { Id: 3, Name: "PLEX-companion" },
+    { Id: 3, Name: "WATCH-companion" },
   ];
 
   it("matches a case-insensitive substring", () => {
-    assert.deepEqual(filterStacksByName(stacks, "plex"), [
-      stacks[0],
-      stacks[2],
-    ]);
+    assert.deepEqual(filterStacksByName(stacks, "watch"), [stacks[2]]);
   });
 
   it("returns an empty array when nothing matches", () => {
