@@ -1,6 +1,6 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { parsePullProgress } from "../src/portainer.js";
+import { encodeRegistryAuth, parsePullProgress } from "../src/portainer.js";
 
 function ndjson(...objs: unknown[]): string {
   return objs.map((o) => JSON.stringify(o)).join("\n") + "\n";
@@ -93,5 +93,26 @@ describe("parsePullProgress", () => {
       parsePullProgress(raw).statusLine,
       "Status: Downloaded newer image for nginx:1.27",
     );
+  });
+});
+
+describe("encodeRegistryAuth", () => {
+  it("encodes only the Portainer stored-registry reference", () => {
+    assert.equal(encodeRegistryAuth(1), "eyJyZWdpc3RyeUlkIjoxfQ==");
+    assert.deepEqual(
+      JSON.parse(
+        Buffer.from(encodeRegistryAuth(42), "base64").toString("utf8"),
+      ),
+      { registryId: 42 },
+    );
+  });
+
+  it("rejects invalid registry IDs at the client boundary", () => {
+    for (const value of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1]) {
+      assert.throws(
+        () => encodeRegistryAuth(value),
+        /registry_id must be a positive safe integer/,
+      );
+    }
   });
 });

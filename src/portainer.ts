@@ -621,6 +621,13 @@ interface RawEnvEntry {
   Value?: string;
 }
 
+export function encodeRegistryAuth(registryId: number): string {
+  if (!Number.isSafeInteger(registryId) || registryId <= 0) {
+    throw new Error("registry_id must be a positive safe integer");
+  }
+  return Buffer.from(JSON.stringify({ registryId }), "utf8").toString("base64");
+}
+
 export class PortainerClient {
   // Always constructed (not just for the insecure-TLS case) so every request
   // goes through an explicit Agent rather than falling through to undici's
@@ -647,7 +654,11 @@ export class PortainerClient {
     path: string,
     query?: Record<string, string>,
     body?: unknown,
-    opts?: { noRedact?: boolean; raw?: boolean },
+    opts?: {
+      noRedact?: boolean;
+      raw?: boolean;
+      additionalHeaders?: Record<string, string>;
+    },
   ): Promise<T> {
     const url = new URL(path, this.config.url);
     if (query) {
@@ -659,6 +670,9 @@ export class PortainerClient {
       "X-API-Key": this.config.apiKey,
       Accept: "application/json",
     };
+    if (opts?.additionalHeaders) {
+      Object.assign(headers, opts.additionalHeaders);
+    }
     let bodyStr: string | undefined;
     if (body !== undefined) {
       bodyStr = JSON.stringify(body);
@@ -864,13 +878,20 @@ export class PortainerClient {
   async pullImage(
     endpointId: number,
     image: string,
+    registryId?: number,
   ): Promise<PullProgressResult> {
     const raw = await this.request<Buffer>(
       "POST",
       `/api/endpoints/${endpointId}/docker/images/create`,
       { fromImage: image },
       undefined,
-      { raw: true },
+      {
+        raw: true,
+        additionalHeaders:
+          registryId === undefined
+            ? undefined
+            : { "X-Registry-Auth": encodeRegistryAuth(registryId) },
+      },
     );
     return parsePullProgress(raw.toString("utf8"));
   }

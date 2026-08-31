@@ -625,8 +625,8 @@ relying on the shape.
 
 ~~List (Portainer)~~, ~~Prune~~, and ~~Pull~~ shipped — List/Prune
 2026-08-18 as `portainer_list_images` / `portainer_prune_images`, Pull
-2026-08-28 as `portainer_pull_image` (public/anonymous registries
-only — see below) — see "Endpoints currently used" above. One
+2026-08-28 as `portainer_pull_image`, with stored private-registry
+credential references added 2026-08-30 — see below. One
 correction from the original candidate list: List (Portainer) is
 `GET /api/docker/{id}/images?withUsage=true` (no
 `/endpoints/{id}/docker/` prefix — it's a native handler, confirmed
@@ -639,22 +639,16 @@ not the path guessed below when this table was first drafted.
 | Inspect            | `GET /api/endpoints/{id}/docker/images/{name}/json`                                                          | Low                    |
 | Remove             | `DELETE /api/endpoints/{id}/docker/images/{name}` (optional `?force=true`)                                   | Medium                 |
 
-**Private-registry auth for image pull, not yet implemented
-(2026-08-28).** Portainer rewrites `X-Registry-Auth` from a registry-id
+**Private-registry auth for image pull (implemented 2026-08-30).**
+Portainer rewrites `X-Registry-Auth` from a registry-id
 reference to the actual docker auth header: send
 `X-Registry-Auth: base64(JSON({"registryId": N}))` to use
 Portainer-stored credentials (Settings > Registries), or pass standard
-Docker auth to forward unchanged. `portainer_pull_image` (shipped
-2026-08-28, see "Endpoints currently used" above) does not send this
-header at all — it only pulls from public/anonymous registries.
-Well-scoped future enhancement: an optional `registry_id` param on
-`portainer_pull_image`, mirroring `git_credential_id`'s pattern
-(reference a Portainer-stored credential by numeric id; no secret ever
-transits the tool call). Deliberately not built in the same pass as the
-tool itself — the OC memory that motivated `portainer_pull_image`
-(2026-08-01, NAS Ollama update) was a public-image pull with no auth
-need at all, so this stayed out of scope rather than being added
-speculatively.
+Docker auth to forward unchanged. `portainer_pull_image` accepts an
+optional positive-integer `registry_id`, mirroring `git_credential_id`'s
+pattern: the call carries only a reference to a credential already stored
+in Portainer, so no registry username, password, or token transits MCP.
+Omitting `registry_id` preserves the original public/anonymous behavior.
 
 ### Network / volume operations
 

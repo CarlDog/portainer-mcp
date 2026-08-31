@@ -56,7 +56,7 @@ export function registerImageTools(
     {
       title: "Portainer: Pull Image",
       description:
-        'Pull a Docker image on an endpoint without touching any container. Use this before portainer_recreate_container(pull_image: false) when the image is large — splitting the slow pull off from the fast recreate avoids the MCP client\'s own tool-call timeout landing on the destructive half of the operation. A pull is safe to retry after a timeout: Docker caches already-downloaded layers, so a retry resumes rather than restarts from scratch (unlike a timed-out recreate, where a blind retry risks racing a second recreate against the one still running). Reports whether a new layer was actually downloaded (`status: "downloaded"`) or the image was already current (`status: "up-to-date"`) — a call returning at all doesn\'t by itself say which. No confirm gate: pulling only adds an image, it never removes or modifies anything running. Supports public/anonymous registries (Docker Hub, GHCR, etc.) only — it does not send any registry credential, so a private-registry pull fails with an auth error even if a matching credential is stored in Portainer (Settings > Registries). Adding that support is a well-scoped future enhancement (reference a stored credential by id, same pattern as create_git_stack\'s git_credential_id), not built here because the case that motivated this tool was a public-image pull.',
+        'Pull a Docker image on an endpoint without touching any container. Use this before portainer_recreate_container(pull_image: false) when the image is large — splitting the slow pull off from the fast recreate avoids the MCP client\'s own tool-call timeout landing on the destructive half of the operation. A pull is safe to retry after a timeout: Docker caches already-downloaded layers, so a retry resumes rather than restarts from scratch (unlike a timed-out recreate, where a blind retry risks racing a second recreate against the one still running). Reports whether a new layer was actually downloaded (`status: "downloaded"`) or the image was already current (`status: "up-to-date"`) — a call returning at all doesn\'t by itself say which. No confirm gate: pulling only adds an image, it never removes or modifies anything running. Public/anonymous pulls need only endpoint_id and image. For a private registry already configured in Portainer (Settings > Registries), pass registry_id to reference that stored credential; no username, password, or token transits the MCP call.',
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
@@ -66,10 +66,19 @@ export function registerImageTools(
             .describe(
               'Image reference to pull, e.g. "nginx:1.27" or "ghcr.io/carldog/portainer-mcp:latest". Omitting a tag pulls "latest".',
             ),
+          registry_id: z
+            .number()
+            .int()
+            .positive()
+            .max(Number.MAX_SAFE_INTEGER)
+            .optional()
+            .describe(
+              "Optional Portainer stored-registry credential ID. References Settings > Registries without exposing the credential itself.",
+            ),
         })
         .strict(),
     },
-    async ({ endpoint_id, image }) =>
-      asText(await p.pullImage(endpoint_id, image)),
+    async ({ endpoint_id, image, registry_id }) =>
+      asText(await p.pullImage(endpoint_id, image, registry_id)),
   );
 }
