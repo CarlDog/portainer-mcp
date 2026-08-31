@@ -24,7 +24,7 @@ const portainer = new PortainerClient({
   verifyTls: PORTAINER_VERIFY_TLS,
 });
 
-const INSTRUCTIONS = `MCP server for Portainer (Docker stack & container management). Read tools (list/get/inspect, container logs, system status) and write tools (start/stop/restart/kill containers, create/delete/redeploy stacks, set stack env, recreate containers, convert stack to git-managed).
+const INSTRUCTIONS = `MCP server for Portainer (Docker stack & container management). Read tools (list/get/inspect, container logs, system status) and write tools (start/stop/restart/kill containers, create/delete/redeploy stacks, set stack env, recreate containers, convert stacks between git-managed and file-based deployment).
 
 Idioms:
 - Most tools take an endpoint_id — the Portainer environment ID. Use portainer_list_endpoints first if you don't know it; for typical home setups it's 2 (the local Docker socket).

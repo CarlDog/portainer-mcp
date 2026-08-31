@@ -459,6 +459,40 @@ export function registerStackTools(
   );
 
   server.registerTool(
+    "portainer_convert_stack_to_file",
+    {
+      title: "Portainer: Convert Git-Managed Stack to File-Based",
+      description:
+        "Convert an existing git-managed standalone Compose stack into a file-based stack, permanently removing Git repository authentication from that stack's deployment path. Reads the checked-out compose and real environment values server-side, requires two-factor confirmation, deletes the source, and recreates the same name on the same endpoint with all environment values preserved. Secret values never enter the tool response. Portainer Git polling and Git auto-update settings are intentionally removed; future compose changes use portainer_update_stack_file and image-only refreshes use portainer_redeploy_stack. RESIDUAL ATOMICITY RISK: Portainer has no in-place conversion endpoint, so deletion precedes creation. The source compose is already known-good, but a runtime deployment failure can still leave the source gone; the error includes the compose YAML and environment key NAMES for recovery. Supports standalone Compose stacks (Type 2) only. SELF-CONVERSION WARNING: do not run this against the portainer-mcp stack itself because the call will be interrupted when its own container is removed.",
+      inputSchema: z
+        .object({
+          source_stack_id: z
+            .number()
+            .int()
+            .describe("ID of the existing git-managed stack to convert"),
+          confirm_name: z
+            .string()
+            .min(1)
+            .describe(
+              "Must exactly match the source stack's Name. Two-factor confirm.",
+            ),
+          confirm: z
+            .literal(true)
+            .describe(
+              "Must be exactly true to acknowledge the destructive (delete-then-create) operation",
+            ),
+        })
+        .strict(),
+    },
+    async ({ source_stack_id, confirm_name }) =>
+      asText(
+        await p.convertStackToFile(source_stack_id, {
+          confirmName: confirm_name,
+        }),
+      ),
+  );
+
+  server.registerTool(
     "portainer_set_git_auth",
     {
       title: "Portainer: Set / Remove Git Authentication on a Stack",

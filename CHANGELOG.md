@@ -15,6 +15,16 @@ rather than after the fact.
 
 ### Added
 
+- Added `portainer_convert_stack_to_file`, the reverse of the existing Git
+  converter, for private stacks that should not depend on Portainer's Git
+  credential subsystem at deployment time. It captures the checked-out
+  compose and unredacted environment server-side, requires exact-name plus
+  boolean confirmation, recreates the stack as standalone Compose, never
+  exposes environment values, and returns compose plus environment key names
+  for recovery if Portainer fails after deleting the source. Git polling is
+  intentionally removed; subsequent compose updates use
+  `portainer_update_stack_file`.
+
 - Added `portainer_delete_volume`, closing a dogfooded cleanup gap without
   exposing Docker's broad volume-prune operation. The tool requires
   `confirm: true` plus an exact `confirm_name`, re-inspects the volume and

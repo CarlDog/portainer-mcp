@@ -1869,6 +1869,99 @@ export class PortainerClient {
     }
   }
 
+  async convertStackToFile(
+    sourceStackId: number,
+    spec: { confirmName: string },
+  ): Promise<unknown> {
+    interface RawStack {
+      Id: number;
+      Type: number;
+      EndpointId: number;
+      Name: string;
+      Env?: RawEnvEntry[];
+      GitConfig?: unknown;
+    }
+
+    // Fetch raw env so every value, including secrets, can move directly
+    // between Portainer API calls without ever entering the MCP response.
+    const source = await this.request<RawStack>(
+      "GET",
+      `/api/stacks/${sourceStackId}`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (source.GitConfig == null) {
+      throw new Error(
+        `Stack ${sourceStackId} (${source.Name}) is already file-based. Use portainer_redeploy_stack or portainer_update_stack_file to update it.`,
+      );
+    }
+    if (source.Type !== 2) {
+      throw new Error(
+        `Stack ${sourceStackId} (${source.Name}) has Type ${source.Type}; git-to-file conversion currently supports standalone Compose stacks (Type 2) only.`,
+      );
+    }
+    if (source.Name !== spec.confirmName) {
+      throw new Error(
+        `Name mismatch: stack ${sourceStackId} is "${source.Name}", caller supplied confirm_name="${spec.confirmName}". Refusing to convert. Re-call with the correct name.`,
+      );
+    }
+
+    // The checked-out stack file is the exact deployment input we need for
+    // the replacement. Unlike convertStackToGit's best-effort recovery copy,
+    // this fetch is mandatory and happens before deletion.
+    const file = await this.request<{ StackFileContent: string }>(
+      "GET",
+      `/api/stacks/${sourceStackId}/file`,
+      undefined,
+      undefined,
+      { noRedact: true },
+    );
+    if (!file.StackFileContent?.trim()) {
+      throw new Error(
+        `Stack ${sourceStackId} (${source.Name}) returned an empty compose file. Refusing to delete the source stack.`,
+      );
+    }
+
+    const sourceName = source.Name;
+    const sourceEndpoint = source.EndpointId;
+    const sourceEnv: Array<{ name: string; value: string }> = (
+      source.Env ?? []
+    ).map((entry) => ({
+      name: (entry.name ?? entry.Name ?? "") as string,
+      value: (entry.value ?? entry.Value ?? "") as string,
+    }));
+
+    await this.request("DELETE", `/api/stacks/${sourceStackId}`, {
+      endpointId: String(sourceEndpoint),
+    });
+
+    try {
+      const stack = await this.createStack(sourceEndpoint, {
+        name: sourceName,
+        composeContent: file.StackFileContent,
+        env: sourceEnv,
+      });
+      return {
+        ok: true,
+        action: "convert_stack_to_file",
+        source_stack_id: sourceStackId,
+        name: sourceName,
+        endpoint_id: sourceEndpoint,
+        git_management_removed: true,
+        stack,
+      };
+    } catch (createErr) {
+      const envKeys = sourceEnv.map((entry) => entry.name).join(", ");
+      const origMsg =
+        createErr instanceof Error ? createErr.message : String(createErr);
+      throw new Error(
+        `Conversion failed AFTER source stack was deleted. The git-managed stack "${sourceName}" (id ${sourceStackId}) on endpoint ${sourceEndpoint} no longer exists. To recover: run portainer_create_stack with name="${sourceName}", endpoint_id=${sourceEndpoint}, and the compose YAML below, then re-add the env vars [${envKeys}] through the Portainer UI (their values are NOT included in this message). Original create error: ${origMsg}\n\n--- ORIGINAL COMPOSE YAML ---\n${file.StackFileContent}\n--- END COMPOSE YAML ---`,
+        { cause: createErr },
+      );
+    }
+  }
+
   async setGitAuth(
     stackId: number,
     spec: { username: string; password: string } | { remove: true },

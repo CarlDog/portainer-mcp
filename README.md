@@ -66,6 +66,7 @@ separately when cleanup is explicitly wanted.
 | `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes); image pruning remains explicit |
 | `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack; image pruning remains explicit |
 | `portainer_convert_stack_to_git` | Convert a file-based stack to git-managed; optional AutoUpdate polling |
+| `portainer_convert_stack_to_file` | Convert a private git-managed Compose stack to file-based deployment while preserving env server-side |
 | `portainer_set_git_auth` | Update git credentials on a git-managed stack |
 | `portainer_delete_stack` | Delete a stack and all its containers |
 | `portainer_prune_images` | Bulk-delete unused images (dangling-only by default, or all-unused) |
