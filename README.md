@@ -81,7 +81,7 @@ separately when cleanup is explicitly wanted.
 | `PORTAINER_VERIFY_TLS` | no | `false` to skip TLS verification (self-signed certs). Default `true`. |
 | `MCP_PORT` | no | Set to enable HTTP transport. Unset = stdio. |
 | `MCP_BIND_HOST` | no | HTTP transport bind address. Default `127.0.0.1`; `docker-compose.yml` sets `0.0.0.0` (required for the port mapping to work at all). |
-| `MCP_ALLOWED_HOSTS` | no | Comma-separated Host/Origin allowlist for the HTTP transport (DNS-rebinding defense). Unset = any host accepted. `docker-compose.yml` defaults to `localhost` — set it to your deployment host's real hostname(s) via Portainer's stack env, or real clients get a 403. |
+| `MCP_ALLOWED_HOSTS` | no | Comma-separated bare-hostname Host/Origin allowlist for the HTTP transport (DNS-rebinding defense; port-independent, bracketed IPv6 like `[::1]` supported). Unset = falls back to `localhost,127.0.0.1,[::1],host.docker.internal` (safe default, not open). `docker-compose.yml` defaults to `localhost` — set it to your deployment host's real hostname(s) via Portainer's stack env, or real clients get a 403. |
 | `MCP_AUTH_TOKEN` | no | Bearer token required on the HTTP transport, on top of the host allowlist. Unset = no auth check (startup logs a warning). Set via the Portainer UI, not committed anywhere. |
 | `MCP_SESSION_IDLE_MS` | no | HTTP transport idle-session eviction cutoff, ms. Default `1800000` (30 min). |
 

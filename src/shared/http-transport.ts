@@ -17,6 +17,10 @@ import { randomUUID, createHash, timingSafeEqual } from "node:crypto";
 import type { Express, Request, Response } from "express";
 import { StreamableHTTPServerTransport } from "@modelcontextprotocol/sdk/server/streamableHttp.js";
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
+import {
+  parseAllowedHosts,
+  requestAuthorityAllowed,
+} from "./mcp-environment.js";
 
 type Session = {
   transport: StreamableHTTPServerTransport;
@@ -59,20 +63,14 @@ function tokenMatches(provided: string, expected: string): boolean {
  * ~/.claude/rules/docker-deployments.md section 8.
  */
 function hostAllowed(req: Request, allowed: string[] | undefined): boolean {
-  if (!allowed || allowed.length === 0) return true; // not configured: open
-  const host = (req.headers.host ?? "").split(":")[0]?.toLowerCase() ?? "";
-  if (allowed.some((h) => h.toLowerCase() === host)) return true;
-
-  const origin = req.headers.origin;
-  if (typeof origin === "string" && origin) {
-    try {
-      const originHost = new URL(origin).hostname.toLowerCase();
-      return allowed.some((h) => h.toLowerCase() === originHost);
-    } catch {
-      return false;
-    }
-  }
-  return false;
+  const headers: { host?: string; origin?: string } = {};
+  if (typeof req.headers.host === "string") headers.host = req.headers.host;
+  if (typeof req.headers.origin === "string")
+    headers.origin = req.headers.origin;
+  return requestAuthorityAllowed(
+    headers,
+    allowed ?? parseAllowedHosts(undefined),
+  );
 }
 
 /**

@@ -33,6 +33,24 @@ rather than after the fact.
   never passes `force=true`, and therefore retains Docker's atomic final
   attachment check as a race-condition backstop.
 
+### Changed
+
+- **`MCP_ALLOWED_HOSTS` matching now handles bracketed IPv6 correctly.**
+  `hostAllowed()` split the incoming Host header at the first colon, turning
+  `[::1]:3004` into the mangled `[` — bracketed IPv6 could never match. Both
+  `hostAllowed()` and `index.ts`'s own allowlist parser (which tried to
+  compensate with a port-stripping regex that its own docstring admitted
+  could never safely strip a bracketed entry) now delegate to the canonical
+  `src/shared/mcp-environment.ts` (`parseAllowedHosts`/
+  `requestAuthorityAllowed`, ported from the claude-fleet-kit
+  `ts-mcp-server` template, previously present only in kindroid-mcp). A
+  `host:port` entry is now a hard startup error instead of a silent,
+  incomplete strip. Behavior change worth naming: when `MCP_ALLOWED_HOSTS`
+  is unset, the allowlist now falls back to
+  `localhost,127.0.0.1,[::1],host.docker.internal` rather than being fully
+  open — the canonical module's default is safe-by-default, not
+  open-by-default.
+
 ## [0.8.3] - 2026-08-28
 
 ### Changed

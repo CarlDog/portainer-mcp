@@ -4,6 +4,7 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import express, { type Request, type Response } from "express";
 import { PortainerClient, registerPortainerTools } from "./portainer.js";
 import { mountMcpHttp } from "./shared/http-transport.js";
+import { parseAllowedHosts as parseAllowedHostsCanonical } from "./shared/mcp-environment.js";
 import { SERVER_VERSION } from "./shared/version.js";
 
 const PORTAINER_URL = process.env.PORTAINER_URL;
@@ -64,32 +65,19 @@ if (portStr && (port === null || Number.isNaN(port))) {
 }
 
 /**
- * Comma-separated allowlist backing a safety control. A value that IS set
- * but parses to zero usable entries throws rather than yielding [] —
- * hostAllowed() in shared/http-transport.ts treats an empty array as "not
- * configured: open", so a typo that empties the list would otherwise
- * silently disable the exact control it was meant to enable. Matching there
- * is hostname-only (the Host header's port is split off, Origin's
- * URL.hostname carries none), so a host:port entry could never match —
- * strip one trailing :<digits> suffix per entry, but only when the
- * remainder holds no other colon, so an IPv6 literal is never mangled into
- * a different (still unmatchable) entry.
+ * Comma-separated allowlist backing a safety control. Delegates to
+ * shared/mcp-environment.ts's parseAllowedHosts (the same validated parser
+ * hostAllowed() in shared/http-transport.ts uses for matching) rather than
+ * a local ad hoc parser. This used to strip a trailing `:<port>` suffix
+ * per entry to compensate for hostAllowed()'s now-fixed hostname-only
+ * match, but the regex could never safely strip a bracketed IPv6 entry
+ * (`[::1]:3000`), so those stayed permanently unmatchable. A `host:port`
+ * entry is now a hard error at startup instead of a silent, incomplete
+ * strip.
  */
 function parseAllowedHosts(raw: string | undefined): string[] | undefined {
   if (raw === undefined) return undefined;
-  const items = raw
-    .split(",")
-    .map((s) => s.trim())
-    .map((s) => s.replace(/^([^:]*):\d+$/, "$1"))
-    .filter(Boolean);
-  if (items.length === 0) {
-    throw new Error(
-      "MCP_ALLOWED_HOSTS is set but contains no usable entries. Leave it " +
-        "unset to allow any host, or an empty value would disable this " +
-        "safety control by accident.",
-    );
-  }
-  return items;
+  return parseAllowedHostsCanonical(raw);
 }
 
 if (port) {
@@ -141,11 +129,16 @@ if (port) {
     console.error(
       `portainer-mcp HTTP transport listening on ${bindHost}:${port} ` +
         `(auth=${authToken ? "bearer" : "none"}, ` +
-        `allowed_hosts=${allowedHosts?.join(",") ?? "any"})`,
+        `allowed_hosts=${allowedHosts?.join(",") ?? "localhost,127.0.0.1,[::1],host.docker.internal (default)"})`,
     );
     if (!authToken) {
       console.error(
         "portainer-mcp: MCP_AUTH_TOKEN is unset — the HTTP endpoint accepts unauthenticated requests",
+      );
+    }
+    if (!allowedHosts) {
+      console.error(
+        "portainer-mcp: MCP_ALLOWED_HOSTS is unset — falling back to localhost,127.0.0.1,[::1],host.docker.internal, which rejects a real remote client",
       );
     }
   });
