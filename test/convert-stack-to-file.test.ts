@@ -4,7 +4,9 @@ import type { AddressInfo } from "node:net";
 import { describe, it } from "node:test";
 import { PortainerClient } from "../src/portainer.js";
 
-async function readJson(req: IncomingMessage): Promise<Record<string, unknown>> {
+async function readJson(
+  req: IncomingMessage,
+): Promise<Record<string, unknown>> {
   const chunks: Buffer[] = [];
   for await (const chunk of req) chunks.push(Buffer.from(chunk));
   return JSON.parse(Buffer.concat(chunks).toString("utf8")) as Record<
@@ -51,17 +53,13 @@ describe("convertStackToFile", () => {
         res.end();
         return;
       }
-      if (
-        requestKey ===
-        "GET /api/stacks?filters=%7B%22EndpointID%22%3A2%7D"
-      ) {
+      if (requestKey === "GET /api/stacks?filters=%7B%22EndpointId%22%3A2%7D") {
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end("[]");
         return;
       }
       if (
-        requestKey ===
-        "POST /api/stacks/create/standalone/string?endpointId=2"
+        requestKey === "POST /api/stacks/create/standalone/string?endpointId=2"
       ) {
         createBody = await readJson(req);
         res.writeHead(200, { "Content-Type": "application/json" });
@@ -91,13 +89,12 @@ describe("convertStackToFile", () => {
         "GET /api/stacks/181",
         "GET /api/stacks/181/file",
         "DELETE /api/stacks/181?endpointId=2",
-        "GET /api/stacks?filters=%7B%22EndpointID%22%3A2%7D",
+        "GET /api/stacks?filters=%7B%22EndpointId%22%3A2%7D",
         "POST /api/stacks/create/standalone/string?endpointId=2",
       ]);
       assert.deepEqual(createBody, {
         Name: "kindroid-mcp",
-        StackFileContent:
-          "services:\n  app:\n    image: example/app:latest\n",
+        StackFileContent: "services:\n  app:\n    image: example/app:latest\n",
         Env: [{ name: "MCP_AUTH_TOKEN", value: "test-secret" }],
       });
       assert.deepEqual(result, {
