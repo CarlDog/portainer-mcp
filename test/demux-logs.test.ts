@@ -1,6 +1,10 @@
 import { describe, it } from "node:test";
 import assert from "node:assert/strict";
-import { demuxDockerLogs, parseDockerTimeFilter } from "../src/portainer.js";
+import {
+  demuxDockerLogs,
+  filterDockerLogs,
+  parseDockerTimeFilter,
+} from "../src/portainer.js";
 
 // Builds one Docker log stream frame: 1-byte stream type + 3 zero bytes +
 // 4-byte big-endian payload length, followed by the payload itself.
@@ -130,6 +134,72 @@ describe("parseDockerTimeFilter", () => {
     assert.throws(
       () => parseDockerTimeFilter("30m1h", NOW),
       /Invalid time filter/,
+    );
+  });
+});
+
+describe("filterDockerLogs", () => {
+  const LOGS = "INFO ready\nWARN retrying\nerror failed\nWARN recovered\n";
+
+  it("filters literal matches and supports case-insensitive matching", async () => {
+    assert.deepEqual(await filterDockerLogs(LOGS, { contains: "WARN" }), {
+      logs: "WARN retrying\nWARN recovered\n",
+      lines_scanned: 4,
+      lines_matched: 2,
+      truncated: false,
+    });
+    assert.equal(
+      (await filterDockerLogs(LOGS, { contains: "ERROR", ignoreCase: true }))
+        .logs,
+      "error failed\n",
+    );
+  });
+
+  it("filters regex matches in an isolated worker", async () => {
+    assert.deepEqual(await filterDockerLogs(LOGS, { regex: "^(WARN|error)" }), {
+      logs: "WARN retrying\nerror failed\nWARN recovered\n",
+      lines_scanned: 4,
+      lines_matched: 3,
+      truncated: false,
+    });
+  });
+
+  it("reports total matches when retained output is capped", async () => {
+    assert.deepEqual(
+      await filterDockerLogs(LOGS, { contains: "WARN", maxMatches: 1 }),
+      {
+        logs: "WARN retrying\n",
+        lines_scanned: 4,
+        lines_matched: 2,
+        truncated: true,
+      },
+    );
+  });
+
+  it("rejects missing, conflicting, malformed, and oversized filters", async () => {
+    await assert.rejects(() => filterDockerLogs(LOGS, {}), /exactly one/);
+    await assert.rejects(
+      () => filterDockerLogs(LOGS, { contains: "WARN", regex: "WARN" }),
+      /exactly one/,
+    );
+    await assert.rejects(
+      () => filterDockerLogs(LOGS, { regex: "[" }),
+      /Invalid regex/,
+    );
+    await assert.rejects(
+      () =>
+        filterDockerLogs("x".repeat(2 * 1024 * 1024 + 1), { contains: "x" }),
+      /2 MiB filtering cap/,
+    );
+  });
+
+  it("terminates a pathological regex instead of blocking the event loop", async () => {
+    await assert.rejects(
+      () =>
+        filterDockerLogs(`${"a".repeat(100_000)}!\n`, {
+          regex: "^(a+)+$",
+        }),
+      /exceeded 250ms and was terminated/,
     );
   });
 });

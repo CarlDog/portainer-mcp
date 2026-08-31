@@ -147,7 +147,7 @@ export function registerContainerTools(
     {
       title: "Portainer: Container Logs",
       description:
-        "Fetch a container's logs, timestamped, as clean newline-delimited text. Docker's stream-multiplexing frame headers (present on non-TTY containers) are stripped server-side before the result is returned. Bound the payload with since/until instead of guessing at a tail count when you want a specific time window.",
+        "Fetch a container's logs, timestamped, as clean newline-delimited text. Docker's stream-multiplexing frame headers are stripped server-side. Bound the fetch with tail/since/until; optionally filter matching lines with exactly one of contains or regex. Regex runs in an isolated, resource-limited worker with a 250ms timeout. Unfiltered calls preserve the original text response; filtered calls return logs plus lines_scanned, lines_matched, and truncated metadata.",
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
@@ -171,14 +171,59 @@ export function registerContainerTools(
             .describe(
               "Only return logs before this time. Same accepted formats as `since`.",
             ),
+          contains: z
+            .string()
+            .min(1)
+            .max(256)
+            .optional()
+            .describe(
+              "Return only lines containing this literal text. Mutually exclusive with regex.",
+            ),
+          regex: z
+            .string()
+            .min(1)
+            .max(256)
+            .optional()
+            .describe(
+              "Return only lines matching this JavaScript regex. Mutually exclusive with contains; execution is isolated and time-limited.",
+            ),
+          ignore_case: z
+            .boolean()
+            .optional()
+            .describe(
+              "Case-insensitive contains or regex matching (default false)",
+            ),
+          max_matches: z
+            .number()
+            .int()
+            .min(1)
+            .max(1000)
+            .optional()
+            .describe(
+              "Maximum matching lines retained in filtered output (default 200)",
+            ),
         })
         .strict(),
     },
-    async ({ endpoint_id, container_id, tail, since, until }) =>
+    async ({
+      endpoint_id,
+      container_id,
+      tail,
+      since,
+      until,
+      contains,
+      regex,
+      ignore_case,
+      max_matches,
+    }) =>
       asText(
         await p.containerLogs(endpoint_id, container_id, tail ?? 100, {
           since,
           until,
+          contains,
+          regex,
+          ignoreCase: ignore_case,
+          maxMatches: max_matches,
         }),
       ),
   );

@@ -1,5 +1,6 @@
 import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, timingSafeEqual } from "node:crypto";
+import { Worker } from "node:worker_threads";
 import { Agent, request as undiciRequest, type Dispatcher } from "undici";
 import { registerSystemTools } from "./tools/system.js";
 import { registerVolumeTools } from "./tools/volumes.js";
@@ -517,6 +518,203 @@ export function demuxDockerLogs(buf: Buffer): string {
   return Buffer.concat(chunks).toString("utf8");
 }
 
+export interface FilteredDockerLogs {
+  logs: string;
+  lines_scanned: number;
+  lines_matched: number;
+  truncated: boolean;
+}
+
+export interface DockerLogFilterOptions {
+  contains?: string;
+  regex?: string;
+  ignoreCase?: boolean;
+  maxMatches?: number;
+}
+
+const LOG_FILTER_MAX_INPUT_BYTES = 2 * 1024 * 1024;
+const LOG_FILTER_MAX_PATTERN_LENGTH = 256;
+const LOG_FILTER_MAX_MATCHES = 1000;
+const LOG_FILTER_DEFAULT_MATCHES = 200;
+const LOG_REGEX_TIMEOUT_MS = 250;
+
+const REGEX_LOG_FILTER_WORKER_SOURCE = String.raw`
+const { parentPort, workerData } = require("node:worker_threads");
+try {
+  const expression = new RegExp(
+    workerData.pattern,
+    workerData.ignoreCase ? "iu" : "u",
+  );
+  const selected = [];
+  let linesMatched = 0;
+  for (const line of workerData.lines) {
+    if (expression.test(line)) {
+      linesMatched += 1;
+      if (selected.length < workerData.maxMatches) selected.push(line);
+    }
+  }
+  parentPort.postMessage({
+    ok: true,
+    result: {
+      logs: selected.length === 0 ? "" : selected.join("\n") + "\n",
+      lines_scanned: workerData.lines.length,
+      lines_matched: linesMatched,
+      truncated: linesMatched > selected.length,
+    },
+  });
+} catch (error) {
+  parentPort.postMessage({
+    ok: false,
+    error: error instanceof Error ? error.message : String(error),
+  });
+}
+`;
+
+function dockerLogLines(logs: string): string[] {
+  if (logs === "") return [];
+  const withoutTrailingNewline = logs.endsWith("\n") ? logs.slice(0, -1) : logs;
+  return withoutTrailingNewline
+    .split("\n")
+    .map((line) => (line.endsWith("\r") ? line.slice(0, -1) : line));
+}
+
+function filteredLogResult(
+  lines: string[],
+  matches: string[],
+  linesMatched: number,
+): FilteredDockerLogs {
+  return {
+    logs: matches.length === 0 ? "" : `${matches.join("\n")}\n`,
+    lines_scanned: lines.length,
+    lines_matched: linesMatched,
+    truncated: linesMatched > matches.length,
+  };
+}
+
+export async function filterDockerLogs(
+  logs: string,
+  options: DockerLogFilterOptions,
+): Promise<FilteredDockerLogs> {
+  const filterCount =
+    Number(options.contains !== undefined) +
+    Number(options.regex !== undefined);
+  if (filterCount !== 1) {
+    throw new Error("Specify exactly one of contains or regex");
+  }
+  const pattern = options.contains ?? options.regex ?? "";
+  if (pattern.length === 0 || pattern.length > LOG_FILTER_MAX_PATTERN_LENGTH) {
+    throw new Error(
+      `Log filter must be 1-${LOG_FILTER_MAX_PATTERN_LENGTH} characters`,
+    );
+  }
+  const maxMatches = options.maxMatches ?? LOG_FILTER_DEFAULT_MATCHES;
+  if (
+    !Number.isSafeInteger(maxMatches) ||
+    maxMatches < 1 ||
+    maxMatches > LOG_FILTER_MAX_MATCHES
+  ) {
+    throw new Error(
+      `max_matches must be an integer from 1-${LOG_FILTER_MAX_MATCHES}`,
+    );
+  }
+  if (Buffer.byteLength(logs, "utf8") > LOG_FILTER_MAX_INPUT_BYTES) {
+    throw new Error(
+      "Fetched logs exceed the 2 MiB filtering cap; narrow tail, since, or until and retry",
+    );
+  }
+
+  const lines = dockerLogLines(logs);
+  if (options.contains !== undefined) {
+    const needle = options.ignoreCase
+      ? options.contains.toLowerCase()
+      : options.contains;
+    const matches: string[] = [];
+    let linesMatched = 0;
+    for (const line of lines) {
+      const candidate = options.ignoreCase ? line.toLowerCase() : line;
+      if (candidate.includes(needle)) {
+        linesMatched += 1;
+        if (matches.length < maxMatches) matches.push(line);
+      }
+    }
+    return filteredLogResult(lines, matches, linesMatched);
+  }
+
+  try {
+    new RegExp(pattern, options.ignoreCase ? "iu" : "u");
+  } catch (error) {
+    throw new Error(
+      `Invalid regex: ${error instanceof Error ? error.message : String(error)}`,
+      { cause: error },
+    );
+  }
+
+  return new Promise<FilteredDockerLogs>((resolve, reject) => {
+    const worker = new Worker(REGEX_LOG_FILTER_WORKER_SOURCE, {
+      eval: true,
+      workerData: {
+        lines,
+        pattern,
+        ignoreCase: options.ignoreCase ?? false,
+        maxMatches,
+      },
+      resourceLimits: {
+        maxOldGenerationSizeMb: 32,
+        maxYoungGenerationSizeMb: 8,
+        stackSizeMb: 2,
+      },
+    });
+    let settled = false;
+    const timer = setTimeout(() => {
+      if (settled) return;
+      settled = true;
+      void worker.terminate();
+      reject(
+        new Error(
+          `Regex filter exceeded ${LOG_REGEX_TIMEOUT_MS}ms and was terminated; use a simpler regex or contains`,
+        ),
+      );
+    }, LOG_REGEX_TIMEOUT_MS);
+
+    worker.once("message", (message: unknown) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      void worker.terminate();
+      if (
+        message === null ||
+        typeof message !== "object" ||
+        !("ok" in message) ||
+        message.ok !== true ||
+        !("result" in message)
+      ) {
+        const detail =
+          message !== null &&
+          typeof message === "object" &&
+          "error" in message &&
+          typeof message.error === "string"
+            ? message.error
+            : "invalid worker response";
+        reject(new Error(`Regex filter failed: ${detail}`));
+        return;
+      }
+      resolve(message.result as FilteredDockerLogs);
+    });
+    worker.once("error", (error) => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Regex filter worker failed: ${error.message}`));
+    });
+    worker.once("exit", (code) => {
+      if (settled || code === 0) return;
+      settled = true;
+      clearTimeout(timer);
+      reject(new Error(`Regex filter worker exited with code ${code}`));
+    });
+  });
+}
+
 const RELATIVE_DURATION_RE = /^(\d+d)?(\d+h)?(\d+m)?(\d+s)?$/;
 
 // Docker's raw HTTP API only accepts `since`/`until` as Unix timestamps
@@ -846,8 +1044,15 @@ export class PortainerClient {
     endpointId: number,
     containerId: string,
     tail: number,
-    opts: { since?: string; until?: string } = {},
-  ): Promise<string> {
+    opts: {
+      since?: string;
+      until?: string;
+      contains?: string;
+      regex?: string;
+      ignoreCase?: boolean;
+      maxMatches?: number;
+    } = {},
+  ): Promise<string | FilteredDockerLogs> {
     const query: Record<string, string> = {
       stdout: "true",
       stderr: "true",
@@ -867,7 +1072,9 @@ export class PortainerClient {
       undefined,
       { raw: true },
     );
-    return demuxDockerLogs(raw);
+    const logs = demuxDockerLogs(raw);
+    if (opts.contains === undefined && opts.regex === undefined) return logs;
+    return filterDockerLogs(logs, opts);
   }
 
   // Pulls an image without touching any container -- splits the slow part

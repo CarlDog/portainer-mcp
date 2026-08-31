@@ -427,9 +427,11 @@ handles both. Don't hard-code one variant when reading.
 `GET /api/endpoints/{id}/docker/containers/{id}/logs` returns Docker's
 non-TTY stream-multiplex frames: 8-byte header per frame
 (`stream_type, [3]byte_pad, length`). Portainer does not de-multiplex.
-Our current `portainer_container_logs` returns the raw output;
-readable but ugly. Could parse and split into stdout/stderr if it
-becomes a problem.
+`portainer_container_logs` demultiplexes these frames against the raw
+response bytes before UTF-8 decoding. It also supports bounded literal
+and regex line filtering after demultiplexing; regex evaluation runs in
+an isolated resource-limited worker with a hard timeout so a pathological
+expression cannot block the MCP event loop.
 
 ### Compose-create silently nukes a name-collision Swarm stack
 
@@ -563,7 +565,7 @@ via the host's hostname (e.g. `your-nas:9443`). Use
 | `portainer_get_stack`         | `GET /api/stacks/{id}`                                                    | Includes `Env` (redacted) and `StackFileContent`    |
 | `portainer_list_containers`   | `GET /api/endpoints/{id}/docker/containers/json` (optional `?all=true`)   | Docker proxy passthrough                            |
 | `portainer_get_container`     | `GET /api/endpoints/{id}/docker/containers/{id}/json`                     | Docker inspect; `Config.Env` redacted              |
-| `portainer_container_logs`    | `GET /api/endpoints/{id}/docker/containers/{id}/logs?tail=N&timestamps=true` | Raw Docker stream-multiplex framing                |
+| `portainer_container_logs`    | `GET /api/endpoints/{id}/docker/containers/{id}/logs?tail=N&timestamps=true` | Demultiplexed; optional bounded line filtering     |
 | `portainer_container_start`   | `POST /api/endpoints/{id}/docker/containers/{id}/start`                   | Pure passthrough; 204 on success                    |
 | `portainer_container_stop`    | `POST /api/endpoints/{id}/docker/containers/{id}/stop` (optional `?t=N`)  | Graceful SIGTERM → SIGKILL after timeout            |
 | `portainer_container_restart` | `POST /api/endpoints/{id}/docker/containers/{id}/restart` (optional `?t=N`) | Same SIGTERM/wait/SIGKILL/start as stop+start      |
