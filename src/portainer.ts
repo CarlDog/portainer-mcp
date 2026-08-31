@@ -304,12 +304,6 @@ function mergeField(result: unknown, key: string, value: unknown): unknown {
   return { result, [key]: value };
 }
 
-// Merges an automatic post-redeploy image-prune result into a redeploy/
-// recreate response without clobbering it.
-export function withImagePrune(result: unknown, imagePrune: unknown): unknown {
-  return mergeField(result, "imagePrune", imagePrune);
-}
-
 interface ContainerIdentity {
   name: string;
   id: string;
@@ -355,7 +349,7 @@ export function diffContainerRecreation(
 }
 
 // Merges the container-recreation diff onto a redeploy-shaped response,
-// same additive pattern as withImagePrune/withEnvWarnings. `null` for
+// using the same additive pattern as the other response helpers. `null` for
 // either snapshot means the pre/post container list couldn't be read
 // (best-effort, never blocks the actual write) -- omit the field
 // entirely rather than emit a diff that would misleadingly read every
@@ -396,7 +390,7 @@ export function findUnreferencedEnvKeys(
 }
 
 // Merges advisory env-reference warnings onto a set_stack_env response
-// without clobbering it -- same pattern as withImagePrune.
+// without clobbering it.
 export function withEnvWarnings(result: unknown, warnings: string[]): unknown {
   if (warnings.length === 0) return result;
   return mergeField(result, "envWarnings", warnings);
@@ -424,7 +418,7 @@ export function pruneNoopWarning(
 }
 
 // Merges an advisory prune-no-op warning onto a response without clobbering
-// it -- same additive pattern as withEnvWarnings/withImagePrune.
+// it -- same additive pattern as withEnvWarnings.
 export function withPruneWarning(
   result: unknown,
   warning: string | null,
@@ -1231,27 +1225,6 @@ export class PortainerClient {
     );
   }
 
-  // Dangling-only prune run automatically after a redeploy/recreate that
-  // may have pulled a new image digest (docker-deployments.md rule 5:
-  // every push that changes the digest bounces the container and leaves
-  // the old digest dangling). Never allUnused here — that branch stays an
-  // explicit, separately-confirmed opt-in via portainer_prune_images. A
-  // prune failure must not fail the redeploy that already succeeded — log
-  // to stderr and surface the failure in the merged response instead of
-  // throwing.
-  private async pruneDanglingAfterRedeploy(
-    endpointId: number,
-  ): Promise<unknown> {
-    try {
-      return await this.pruneImages(endpointId, { allUnused: false });
-    } catch (err) {
-      console.error(
-        `portainer-mcp: post-redeploy image prune failed for endpoint ${endpointId}: ${String(err)}`,
-      );
-      return { error: String(err) };
-    }
-  }
-
   // Best-effort snapshot of a stack's containers (name + id) for the
   // before/after recreation diff. Returns null on any failure rather
   // than throwing or returning [] -- [] is a real, meaningful state (a
@@ -1427,16 +1400,12 @@ export class PortainerClient {
         prune: opts.prune,
       },
     );
-    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
     const after = await this.trySnapshotStackContainers(
       stack.EndpointId,
       stack.Name,
     );
     return withContainerChanges(
-      withPruneWarning(
-        withImagePrune(result, imagePrune),
-        pruneNoopWarning(stack.Type, opts.prune),
-      ),
+      withPruneWarning(result, pruneNoopWarning(stack.Type, opts.prune)),
       before,
       after,
     );
@@ -1463,16 +1432,12 @@ export class PortainerClient {
         prune: opts.prune,
       },
     );
-    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
     const after = await this.trySnapshotStackContainers(
       stack.EndpointId,
       stack.Name,
     );
     return withContainerChanges(
-      withPruneWarning(
-        withImagePrune(result, imagePrune),
-        pruneNoopWarning(stack.Type, opts.prune),
-      ),
+      withPruneWarning(result, pruneNoopWarning(stack.Type, opts.prune)),
       before,
       after,
     );
@@ -1560,16 +1525,12 @@ export class PortainerClient {
       { endpointId: String(stack.EndpointId) },
       payload,
     );
-    const imagePrune = await this.pruneDanglingAfterRedeploy(stack.EndpointId);
     const after = await this.trySnapshotStackContainers(
       stack.EndpointId,
       stack.Name,
     );
     return withContainerChanges(
-      withPruneWarning(
-        withImagePrune(result, imagePrune),
-        pruneNoopWarning(stack.Type, effectivePrune),
-      ),
+      withPruneWarning(result, pruneNoopWarning(stack.Type, effectivePrune)),
       before,
       after,
     );
@@ -1598,14 +1559,12 @@ export class PortainerClient {
       "GET",
       `/api/endpoints/${endpointId}/docker/containers/${containerRef}/json`,
     );
-    const result = await this.request(
+    return this.request(
       "POST",
       `/api/docker/${endpointId}/containers/${resolved.Id}/recreate`,
       undefined,
       { PullImage: opts.pullImage },
     );
-    const imagePrune = await this.pruneDanglingAfterRedeploy(endpointId);
-    return withImagePrune(result, imagePrune);
   }
 
   // Shared pre-flight name-collision check for createStack/createGitStack —

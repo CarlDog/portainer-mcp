@@ -24,12 +24,10 @@ callers; see [STATUS.md](STATUS.md) for scope details and known gaps.
 All input schemas enforce `.strict()` — an unknown or misspelled param
 name is rejected with a clear error rather than silently dropped.
 
-The four redeploy/recreate tools (`portainer_redeploy_stack`,
-`portainer_update_stack_file`, `portainer_redeploy_git_stack`,
-`portainer_recreate_container`) automatically run a dangling-image prune
-on the affected endpoint right after they redeploy — the old digest a
-rebuild-and-repush leaves behind gets cleaned up as part of the deploy
-itself, no separate call or schedule needed.
+Redeploy/recreate tools never prune images implicitly. A dangling digest
+may be an intentional rollback point, so inspect with
+`portainer_list_images` and call confirm-gated `portainer_prune_images`
+separately when cleanup is explicitly wanted.
 
 ### Read
 
@@ -59,14 +57,14 @@ itself, no separate call or schedule needed.
 | `portainer_container_kill` | SIGKILL a container (not graceful) |
 | `portainer_container_delete` | Delete a container (irreversible; force=true to delete a running one) |
 | `portainer_delete_volume` | Permanently delete one exact dangling volume (irreversible; two-factor name confirmation; never forced) |
-| `portainer_recreate_container` | Recreate a container (optionally re-pull image); auto-prunes dangling images after |
+| `portainer_recreate_container` | Recreate a container (optionally re-pull image); preserves dangling rollback images |
 | `portainer_pull_image` | Pull an image without touching any container; optionally reference a Portainer-stored private-registry credential by `registry_id` |
 | `portainer_create_stack` | Create a new compose stack from a file body |
 | `portainer_create_git_stack` | Create a git-managed stack from a repository; optional AutoUpdate polling |
-| `portainer_update_stack_file` | Replace a stack's compose file content; auto-prunes dangling images after |
+| `portainer_update_stack_file` | Replace a stack's compose file content; image pruning remains explicit |
 | `portainer_set_stack_env` | Set/update a stack's environment variables; warns if a set key isn't referenced in the compose file |
-| `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes); auto-prunes dangling images after |
-| `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack; auto-prunes dangling images after |
+| `portainer_redeploy_stack` | Redeploy a file-based stack (apply config changes); image pruning remains explicit |
+| `portainer_redeploy_git_stack` | Re-pull and redeploy a git-managed stack; image pruning remains explicit |
 | `portainer_convert_stack_to_git` | Convert a file-based stack to git-managed; optional AutoUpdate polling |
 | `portainer_set_git_auth` | Update git credentials on a git-managed stack |
 | `portainer_delete_stack` | Delete a stack and all its containers |
