@@ -1923,43 +1923,31 @@ export class PortainerClient {
       );
     }
 
-    const sourceName = source.Name;
-    const sourceEndpoint = source.EndpointId;
-    const sourceEnv: Array<{ name: string; value: string }> = (
-      source.Env ?? []
-    ).map((entry) => ({
-      name: (entry.name ?? entry.Name ?? "") as string,
-      value: (entry.value ?? entry.Value ?? "") as string,
-    }));
-
-    await this.request("DELETE", `/api/stacks/${sourceStackId}`, {
-      endpointId: String(sourceEndpoint),
-    });
-
-    try {
-      const stack = await this.createStack(sourceEndpoint, {
-        name: sourceName,
-        composeContent: file.StackFileContent,
-        env: sourceEnv,
-      });
-      return {
-        ok: true,
-        action: "convert_stack_to_file",
-        source_stack_id: sourceStackId,
-        name: sourceName,
-        endpoint_id: sourceEndpoint,
-        git_management_removed: true,
-        stack,
-      };
-    } catch (createErr) {
-      const envKeys = sourceEnv.map((entry) => entry.name).join(", ");
-      const origMsg =
-        createErr instanceof Error ? createErr.message : String(createErr);
-      throw new Error(
-        `Conversion failed AFTER source stack was deleted. The git-managed stack "${sourceName}" (id ${sourceStackId}) on endpoint ${sourceEndpoint} no longer exists. To recover: run portainer_create_stack with name="${sourceName}", endpoint_id=${sourceEndpoint}, and the compose YAML below, then re-add the env vars [${envKeys}] through the Portainer UI (their values are NOT included in this message). Original create error: ${origMsg}\n\n--- ORIGINAL COMPOSE YAML ---\n${file.StackFileContent}\n--- END COMPOSE YAML ---`,
-        { cause: createErr },
-      );
-    }
+    // Portainer's ordinary file-update handler deliberately clears
+    // stack.GitConfig. For this converter that behavior is the operation,
+    // not an accidental side effect: round-trip the already deployed compose
+    // and raw env onto the SAME stack record, preserving its id/name/access
+    // controls while removing repository auth and polling from future deploys.
+    const result = await this.request(
+      "PUT",
+      `/api/stacks/${sourceStackId}`,
+      { endpointId: String(source.EndpointId) },
+      {
+        stackFileContent: file.StackFileContent,
+        env: source.Env ?? [],
+        repullImageAndRedeploy: false,
+        prune: false,
+      },
+    );
+    return {
+      ok: true,
+      action: "convert_stack_to_file",
+      stack_id: sourceStackId,
+      name: source.Name,
+      endpoint_id: source.EndpointId,
+      git_management_removed: true,
+      portainer_result: result,
+    };
   }
 
   async setGitAuth(

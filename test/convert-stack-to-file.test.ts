@@ -16,9 +16,9 @@ async function readJson(
 }
 
 describe("convertStackToFile", () => {
-  it("preserves raw env server-side while replacing a git-managed Compose stack", async () => {
+  it("preserves raw env server-side while detaching a git-managed Compose stack", async () => {
     const requests: string[] = [];
-    let createBody: Record<string, unknown> | undefined;
+    let updateBody: Record<string, unknown> | undefined;
 
     const server: Server = createServer(async (req, res) => {
       const requestKey = `${req.method} ${req.url}`;
@@ -48,20 +48,8 @@ describe("convertStackToFile", () => {
         );
         return;
       }
-      if (requestKey === "DELETE /api/stacks/181?endpointId=2") {
-        res.writeHead(204);
-        res.end();
-        return;
-      }
-      if (requestKey === "GET /api/stacks?filters=%7B%22EndpointId%22%3A2%7D") {
-        res.writeHead(200, { "Content-Type": "application/json" });
-        res.end("[]");
-        return;
-      }
-      if (
-        requestKey === "POST /api/stacks/create/standalone/string?endpointId=2"
-      ) {
-        createBody = await readJson(req);
+      if (requestKey === "PUT /api/stacks/181?endpointId=2") {
+        updateBody = await readJson(req);
         res.writeHead(200, { "Content-Type": "application/json" });
         res.end(JSON.stringify({ Id: 201, Name: "kindroid-mcp" }));
         return;
@@ -88,23 +76,22 @@ describe("convertStackToFile", () => {
       assert.deepEqual(requests, [
         "GET /api/stacks/181",
         "GET /api/stacks/181/file",
-        "DELETE /api/stacks/181?endpointId=2",
-        "GET /api/stacks?filters=%7B%22EndpointId%22%3A2%7D",
-        "POST /api/stacks/create/standalone/string?endpointId=2",
+        "PUT /api/stacks/181?endpointId=2",
       ]);
-      assert.deepEqual(createBody, {
-        Name: "kindroid-mcp",
-        StackFileContent: "services:\n  app:\n    image: example/app:latest\n",
-        Env: [{ name: "MCP_AUTH_TOKEN", value: "test-secret" }],
+      assert.deepEqual(updateBody, {
+        stackFileContent: "services:\n  app:\n    image: example/app:latest\n",
+        env: [{ name: "MCP_AUTH_TOKEN", value: "test-secret" }],
+        repullImageAndRedeploy: false,
+        prune: false,
       });
       assert.deepEqual(result, {
         ok: true,
         action: "convert_stack_to_file",
-        source_stack_id: 181,
+        stack_id: 181,
         name: "kindroid-mcp",
         endpoint_id: 2,
         git_management_removed: true,
-        stack: { Id: 201, Name: "kindroid-mcp" },
+        portainer_result: { Id: 201, Name: "kindroid-mcp" },
       });
     } finally {
       server.closeAllConnections();
@@ -114,7 +101,7 @@ describe("convertStackToFile", () => {
     }
   });
 
-  it("refuses an empty checked-out compose before deleting the source", async () => {
+  it("refuses an empty checked-out compose before updating the source", async () => {
     const requests: string[] = [];
     const server: Server = createServer((req, res) => {
       const requestKey = `${req.method} ${req.url}`;

@@ -19,10 +19,11 @@ rather than after the fact.
   converter, for private stacks that should not depend on Portainer's Git
   credential subsystem at deployment time. It captures the checked-out
   compose and unredacted environment server-side, requires exact-name plus
-  boolean confirmation, recreates the stack as standalone Compose, never
-  exposes environment values, and returns compose plus environment key names
-  for recovery if Portainer fails after deleting the source. Git polling is
-  intentionally removed; subsequent compose updates use
+  boolean confirmation, and intentionally uses Portainer's file-update
+  handler to clear `GitConfig` on the same stack record. The stack ID, name,
+  endpoint, access controls, compose, and environment are preserved without a
+  delete/recreate window, and environment values are never exposed. Git
+  polling is intentionally removed; subsequent compose updates use
   `portainer_update_stack_file`.
 
 - Added `portainer_delete_volume`, closing a dogfooded cleanup gap without
