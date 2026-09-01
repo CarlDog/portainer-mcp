@@ -2,12 +2,12 @@ import type { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import { createHash, timingSafeEqual } from "node:crypto";
 import { Worker } from "node:worker_threads";
 import { Agent, request as undiciRequest, type Dispatcher } from "undici";
+import { registerContainerTools } from "./tools/containers.js";
+import { registerImageTools } from "./tools/images.js";
+import { registerNetworkTools } from "./tools/networks.js";
+import { registerStackTools } from "./tools/stacks.js";
 import { registerSystemTools } from "./tools/system.js";
 import { registerVolumeTools } from "./tools/volumes.js";
-import { registerNetworkTools } from "./tools/networks.js";
-import { registerImageTools } from "./tools/images.js";
-import { registerContainerTools } from "./tools/containers.js";
-import { registerStackTools } from "./tools/stacks.js";
 
 interface PortainerConfig {
   url: string;
@@ -694,11 +694,12 @@ export async function filterDockerLogs(
       }
       resolve(message.result as FilteredDockerLogs);
     });
-    worker.once("error", (error) => {
+    worker.once("error", (error: unknown) => {
       if (settled) return;
       settled = true;
       clearTimeout(timer);
-      reject(new Error(`Regex filter worker failed: ${error.message}`));
+      const detail = error instanceof Error ? error.message : String(error);
+      reject(new Error(`Regex filter worker failed: ${detail}`));
     });
     worker.once("exit", (code) => {
       if (settled || code === 0) return;
