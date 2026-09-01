@@ -39,6 +39,12 @@ updates:
       # Remove when the lint stack officially supports TypeScript 7.
       - dependency-name: typescript
         versions: ["7.x"]
+      # Keep declaration majors aligned with the Node runtime floor: newer
+      # declarations expose APIs the shipped runtime may not have. Remove only
+      # in the same change that raises engines.node, the Docker base image and
+      # the CI runtime together.
+      - dependency-name: "@types/node"
+        update-types: ["version-update:semver-major"]
     groups:
       npm-dev:
         dependency-type: development
