@@ -32,6 +32,13 @@ updates:
     labels:
       - dependencies
       - npm
+    ignore:
+      # typescript-eslint 8.x peer-requires TypeScript <7, so a TS 7 bump
+      # fails npm ci with ERESOLVE before any test runs. Keep compatible
+      # TypeScript 6 updates flowing while deferring only TypeScript 7.
+      # Remove when the lint stack officially supports TypeScript 7.
+      - dependency-name: typescript
+        versions: ["7.x"]
     groups:
       npm-dev:
         dependency-type: development
