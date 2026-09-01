@@ -1,5 +1,5 @@
-import { describe, it } from "node:test";
 import assert from "node:assert/strict";
+import { describe, it } from "node:test";
 import {
   demuxDockerLogs,
   filterDockerLogs,
@@ -194,10 +194,11 @@ describe("filterDockerLogs", () => {
   });
 
   it("terminates a pathological regex instead of blocking the event loop", async () => {
+    const catastrophicRegex = "^(" + "a+" + ")+$";
     await assert.rejects(
       () =>
         filterDockerLogs(`${"a".repeat(100_000)}!\n`, {
-          regex: "^(a+)+$",
+          regex: catastrophicRegex,
         }),
       /exceeded 250ms and was terminated/,
     );
