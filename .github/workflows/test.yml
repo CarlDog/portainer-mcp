@@ -11,6 +11,10 @@ env:
   # this npm rejects, so pin both sides (here + package.json "packageManager")
   # to keep local == CI. See claude-fleet-kit fleet/lessons/npm-version-skew.
   PINNED_NPM: "11.19.0"
+
+permissions:
+  contents: read
+
 jobs:
   test:
     name: ${{ matrix.os }}
