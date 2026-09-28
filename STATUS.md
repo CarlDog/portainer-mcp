@@ -1096,7 +1096,15 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   substring/regex filter — `since`/`until` covers "just the last N
   minutes," not "only lines matching X" — that narrower piece of the
   original 2026-06-03 finding remains unbuilt.
-- **Protect `main` with required status checks (filed 2026-09-28).**
+- **Protect `main` with required status checks (filed 2026-09-28). DONE the
+  same day (operator decision):** classic protection requires a PR (0
+  approvals) and `ubuntu-latest`, `windows-latest`, `macos-latest`,
+  `lint + format`, `Scan for secrets`, `Analyze (javascript-typescript)` and
+  `Analyze (actions)`, with the branch up to date. It is **enforced for
+  admins**, so the operator's token (which agents use) cannot push directly;
+  that supersedes the "leave admin bypass on" proposal below. Force pushes
+  and deletion are blocked. This entry's PR is the first merged under it.
+  The original filing follows.
   `main` has no branch protection and no rulesets (the API returns
   `Branch not protected`). Two consequences, both seen for real on
   2026-09-28:
