@@ -1096,6 +1096,29 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   substring/regex filter — `since`/`until` covers "just the last N
   minutes," not "only lines matching X" — that narrower piece of the
   original 2026-06-03 finding remains unbuilt.
+- **Protect `main` with required status checks (filed 2026-09-28).**
+  `main` has no branch protection and no rulesets (the API returns
+  `Branch not protected`). Two consequences, both seen for real on
+  2026-09-28:
+  - Nothing stops a direct push, so work can land without a PR or CI.
+  - `gh pr merge --auto` waits only for *required* checks. With none
+    configured it merged PRs #34 and #35 at once, while their CI was still
+    running. CI later passed on the merge commit (`2a9932d1`), but the
+    promise "merge when CI passes" was not kept by the tooling.
+
+  **Proposed (a decision for the operator; the repository setting is
+  theirs to change):** a protection rule or ruleset on `main` requiring a
+  PR and these checks: `ubuntu-latest`, `windows-latest`, `macos-latest`
+  and `lint + format` (from `Test`, which runs on every PR with no path
+  filter, so docs-only PRs are never left waiting on a skipped check);
+  `Scan for secrets` (gitleaks); and the CodeQL default-setup analyses.
+  Leave admin bypass on, so a solo maintainer is never locked out.
+  Dependabot PRs pass through the same gate, which is the point.
+
+  **Done when:** a direct push to `main` is refused, and a test PR armed
+  with `gh pr merge --auto` stays open until its checks pass. The same
+  decision is open for openchronicle-mcp (its ROADMAP item HYG-07) and
+  likely applies fleet-wide.
 - **Back up Portainer's own configuration off the NAS (filed
   2026-09-28, from the openchronicle-mcp storage review).** Portainer's
   database is the *only* store for every stack's environment variables,
