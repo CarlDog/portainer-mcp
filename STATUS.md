@@ -1096,6 +1096,46 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
   substring/regex filter — `since`/`until` covers "just the last N
   minutes," not "only lines matching X" — that narrower piece of the
   original 2026-06-03 finding remains unbuilt.
+- **Back up Portainer's own configuration off the NAS (filed
+  2026-09-28, from the openchronicle-mcp storage review).** Portainer's
+  database is the *only* store for every stack's environment variables,
+  including secrets (API keys, tokens) that exist nowhere else but client
+  configs. Stack compose files can be rebuilt from their repos; the env
+  values cannot. Nothing backs it up today: no Hyper Backup or Snapshot
+  Replication task covers the `docker` share (confirmed by the operator
+  2026-09-28).
+
+  **Facts, read 2026-09-28:** the container `portainer-ce` actually runs
+  `portainer/portainer-ee:2.39.8` (Business Edition, licensed), with its
+  data bind-mounted from `/volume1/docker/portainer-ce` to `/data`.
+  Business Edition has a built-in backup (Settings → Backup Portainer):
+  a password-encrypted archive, either downloaded on demand or scheduled
+  to S3-compatible storage.
+
+  **First decide the route; don't jump to a tool.** `PORTAINER-API.md`
+  lists `POST /backup` / `POST /restore` under *deliberately not built*
+  ("Operational concern, not workflow surface"), and the Design
+  Principles avoid new tools that take a secret as input; a backup
+  password is one. Candidate routes, cheapest first:
+  1. **Portainer's own scheduled backup** to an S3-compatible target, with
+     the archive password escrowed off-NAS. No code in this repo. Needs a
+     target: the operator has no S3/B2 today, and openchronicle-mcp's
+     cloud backup uses a Dropbox App folder through rclone, which
+     Portainer cannot write to directly.
+  2. **Operator-run on-demand download** from the UI on a cadence (for
+     example the quarterly phase-end audit), stored with the other off-NAS
+     copies. No code; relies on discipline.
+  3. **A narrow `portainer_backup` tool** that calls `POST /backup` and
+     writes the archive to a file, never into the tool response. This
+     reverses the documented exclusion, so it needs that entry revisited
+     on purpose, a stance on the password input (env-configured, never a
+     tool argument), and a restore drill before it counts.
+
+  **Done when:** one backup has been taken by the chosen route, stored
+  off the NAS, and restored into a disposable Portainer instance whose
+  stack list and one stack's env (compared with
+  `portainer_compare_env_values`, not by eye) match production. An
+  untested backup of the secret store is an assumption, not a backup.
 - Lower priority backlog (covered in PORTAINER-API.md "haven't
   built yet"):
   - `portainer_stack_start` / `portainer_stack_stop` (stack-level
