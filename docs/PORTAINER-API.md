@@ -8,9 +8,10 @@ documented behavior, not discovered at runtime.
 
 This is a living document. When you discover a new quirk, add it here.
 
-Target version: **Portainer CE 2.39.1** (the version running on
-`your-nas`, confirmed via `portainer_system_status`). Pinned spec
-snapshot at [`docs/specs/portainer.json`](specs/portainer.json).
+Pinned reference version: **Portainer CE 2.39.1**, at
+[`docs/specs/portainer.json`](specs/portainer.json). This is the snapshot
+version, not a live deployment check; confirm the deployed version before
+refreshing it.
 
 ## External references
 
@@ -29,18 +30,21 @@ The authoritative sources, in descending order of trust:
   - Native Docker handlers (Portainer-specific paths): [`api/http/handler/docker/`](https://github.com/portainer/portainer/tree/2.39.1/api/http/handler/docker)
   - System endpoints: [`api/http/handler/system/`](https://github.com/portainer/portainer/tree/2.39.1/api/http/handler/system)
   - Auth: [`api/http/security/bouncer.go`](https://github.com/portainer/portainer/blob/2.39.1/api/http/security/bouncer.go)
-- **[SwaggerHub `portainer/portainer-ce`](https://app.swaggerhub.com/apis/portainer/portainer-ce/)** —
-  the only published spec, generated per release. Versioned (`2.39.1`,
-  `2.40.0`, etc.). Direct download for a given version:
-  `https://api.swaggerhub.com/apis/portainer/portainer-ce/<version>/swagger.json`
+- **[Portainer CE API documentation](https://api-docs.portainer.io/?edition=ce)** —
+  the published, versioned API reference, linked from
+  [Portainer's official docs](https://docs.portainer.io/api/docs). SwaggerHub
+  was retired on 2026-10-14; its old versioned download URLs return 404.
+  The CE manifest at `https://api-docs.portainer.io/ce-versions.json` maps
+  each version's `id` to its YAML `file` path; use that mapping rather than
+  guessing a filename. See the refresh process and verification limit below.
 - **[docs.portainer.io](https://docs.portainer.io/)** — user docs, not
   reference material. Useful for understanding intent (e.g. "what is
   an environment" vs "what is a stack") but doesn't document the API.
 - **The running instance does NOT serve a spec.** Confirmed in
   [`api/http/handler/handler.go`](https://github.com/portainer/portainer/blob/2.39.1/api/http/handler/handler.go) —
   no `/api/docs` or swagger-ui route is registered. The spec is
-  generated to `dist/docs/swagger.yaml` at build time and shipped
-  only via SwaggerHub.
+  generated at build time and published separately on the API documentation
+  site.
 
 ## Spec snapshot
 
@@ -48,21 +52,82 @@ The pinned snapshot at [`docs/specs/portainer.json`](specs/portainer.json)
 is **Swagger 2.0** (not OpenAPI 3), 441 KB, 185 paths, 345 type
 definitions. Pulled from SwaggerHub `portainer/portainer-ce/2.39.1`.
 
-**Refresh process** when the deploy target on the NAS upgrades:
+**Refresh process** when the deploy target on the NAS upgrades. Run from
+the repository root with Bash, `curl`, and Python 3 with PyYAML installed
+(`python -m pip install PyYAML` in a temporary virtual environment if needed;
+this is a documentation maintenance dependency, not a server dependency).
+
+**Verification limit (2026-10-15):** the official docs confirm the new
+site, but this repair could not independently fetch its manifest or specs
+because access returned HTTP 403. The manifest fields and example paths
+below are recorded in [issue #46](https://github.com/CarlDog/portainer-mcp/issues/46).
+If access is denied, stop and retain the current pin; do not bypass the
+denial or fall back to the retired SwaggerHub URLs.
 
 1. Confirm the new version: call `portainer_system_status` (or
    `GET /api/system/status` directly) — returns `{Version, InstanceID}`.
-2. Download the matching spec:
+2. List the published CE versions, then select the **exact deployed
+   version**, not the entry marked `latest`. Download into a temporary
+   directory and validate before writing a candidate snapshot:
 
    ```bash
-   curl -L -o docs/specs/portainer.json \
-     https://api.swaggerhub.com/apis/portainer/portainer-ce/<version>/swagger.json
+   set -e
+   version=2.39.8 # example only: replace with the version confirmed in step 1
+   tmp=$(mktemp -d)
+   curl -fsSL -o "$tmp/ce-versions.json" \
+     https://api-docs.portainer.io/ce-versions.json
+   python - "$tmp/ce-versions.json" <<'PY'
+   import json, sys
+   for entry in json.load(open(sys.argv[1], encoding="utf-8")):
+       print(entry["id"], entry["file"], "(latest)" if entry.get("latest") else "")
+   PY
+   file=$(python - "$tmp/ce-versions.json" "$version" <<'PY'
+   import json, sys
+   entries = [v for v in json.load(open(sys.argv[1], encoding="utf-8"))
+              if v["id"] == sys.argv[2]]
+   if len(entries) != 1:
+       raise SystemExit("Expected exactly one manifest entry for the deployed version")
+   print(entries[0]["file"])
+   PY
+   )
+   case "$file" in
+     versions/ce/*.yaml) ;;
+     *) echo "Unexpected CE spec path: $file" >&2; exit 1 ;;
+   esac
+   curl -fsSL -o "$tmp/portainer.yaml" "https://api-docs.portainer.io/$file"
+   python - "$tmp/portainer.yaml" "$version" <<'PY'
+   import sys, yaml
+   spec = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
+   if not isinstance(spec, dict) or spec.get("info", {}).get("version") != sys.argv[2]:
+       raise SystemExit("Spec version does not match the deployed version")
+   if spec.get("swagger") != "2.0" and not str(spec.get("openapi", "")).startswith("3."):
+       raise SystemExit("Expected Swagger 2.0 or OpenAPI 3")
+   if not isinstance(spec.get("paths"), dict) or not spec["paths"]:
+       raise SystemExit("Spec has no paths")
+   print("format:", spec.get("swagger") or spec["openapi"], "paths:", len(spec["paths"]))
+   PY
+   cp "$tmp/portainer.yaml" "docs/specs/portainer-$version.yaml"
    ```
 
-3. `git diff` shows what changed; update this doc accordingly. Pay
-   attention to new endpoints under `/stacks` and `/endpoints/{id}/docker`
-   that we might want to wrap, and to deprecation flags on existing
-   ones.
+   Manifest examples from #46: `2.39.1` maps to
+   `versions/ce/2.39.1.yaml` (Swagger 2.0); `2.39.8` maps to
+   `versions/ce/2.39.8/openapi.yaml` (OpenAPI 3). Both are YAML, so do
+   **not** download either directly over `docs/specs/portainer.json`.
+
+3. Review the candidate alongside the current pin. The format changed
+   from Swagger 2.0 to OpenAPI 3 at 2.39.2: a raw diff against the old
+   JSON pin obscures contract changes. Normalize both to the same OpenAPI
+   version and serialization before comparing; inspect operations, schemas,
+   required parameters, defaults, and deprecations, especially under
+   `/stacks` and `/endpoints/{id}/docker`. See
+   [issue #16](https://github.com/CarlDog/portainer-mcp/issues/16) for the
+   format-change investigation. Counting paths alone does not establish
+   compatibility.
+4. After review, promote the candidate (convert YAML to JSON if retaining
+   the `portainer.json` filename), update the pinned reference version,
+   format/counts, and source-tag links in this doc, and review `git diff`.
+   This source repair leaves the existing 2.39.1 snapshot unchanged; the
+   pin upgrade remains tracked in #16.
 
 The spec's two `securityDefinitions` are `ApiKeyAuth` (header
 `X-API-KEY`) and `jwt` (header `Authorization`).
