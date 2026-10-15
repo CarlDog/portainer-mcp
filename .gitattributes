@@ -3,9 +3,10 @@
 # format:check fail on every file while CI (LF) stays green.
 * text=auto eol=lf
 
-# OpenAPI spec snapshots come from SwaggerHub with LF endings; locking
+# Published OpenAPI spec snapshots use LF endings; locking
 # them prevents CRLF round-trip noise on Windows checkouts so diffs
 # from re-fetching stay reviewable. (Redundant under the repo-wide LF
 # rule above, but kept: it also forces text detection for the 441 KB
 # spec snapshot.)
 docs/specs/*.json text eol=lf
+docs/specs/*.yaml text eol=lf
