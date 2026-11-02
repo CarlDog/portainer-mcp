@@ -13,6 +13,16 @@ rather than after the fact.
 
 ## [Unreleased]
 
+### Security
+
+- Confine container references to a single encoded path segment across all
+  inspect, log, lifecycle, environment-comparison, and recreate requests
+  ([#64](https://github.com/CarlDog/portainer-mcp/issues/64)). Shared MCP input
+  validation rejects traversal and URL syntax before any request, preventing
+  raw log reads from reaching other API endpoints and container actions from
+  bypassing stack or volume confirmation checks. Docker IDs and names,
+  including names with a leading slash, remain supported.
+
 ### Added
 
 - Added `portainer_convert_stack_to_file`, the reverse of the existing Git
