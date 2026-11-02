@@ -821,6 +821,18 @@ export function encodeRegistryAuth(registryId: number): string {
   return Buffer.from(JSON.stringify({ registryId }), "utf8").toString("base64");
 }
 
+// Docker inspect/list names may start with a slash. Normalize that spelling,
+// then keep the reference in one URL segment even for direct client callers
+// that bypass the MCP schema. encodeURIComponent leaves dot-only segments
+// untouched, so reject those before new URL() can normalize them.
+function encodeContainerRef(ref: string): string {
+  const name = ref.startsWith("/") ? ref.slice(1) : ref;
+  if (name === "" || name === "." || name === "..") {
+    throw new Error("container_id must be a Docker container ID or name");
+  }
+  return encodeURIComponent(name);
+}
+
 export class PortainerClient {
   // Always constructed (not just for the insecure-TLS case) so every request
   // goes through an explicit Agent rather than falling through to undici's
@@ -989,7 +1001,7 @@ export class PortainerClient {
   ): Promise<unknown> {
     return this.request(
       "GET",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/json`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/json`,
     );
   }
 
@@ -1006,7 +1018,7 @@ export class PortainerClient {
     }
     const container = await this.request<RawContainer>(
       "GET",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/json`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/json`,
       undefined,
       undefined,
       { noRedact: true },
@@ -1062,7 +1074,7 @@ export class PortainerClient {
     }
     const raw = await this.request<Buffer>(
       "GET",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/logs`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/logs`,
       query,
       undefined,
       { raw: true },
@@ -1272,7 +1284,7 @@ export class PortainerClient {
     // empirical fix that actually works.
     return this.request(
       "POST",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/start`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/start`,
       undefined,
       {},
     );
@@ -1286,7 +1298,7 @@ export class PortainerClient {
     const query = timeout !== undefined ? { t: String(timeout) } : undefined;
     return this.request(
       "POST",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/stop`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/stop`,
       query,
     );
   }
@@ -1299,7 +1311,7 @@ export class PortainerClient {
     const query = timeout !== undefined ? { t: String(timeout) } : undefined;
     return this.request(
       "POST",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/restart`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/restart`,
       query,
     );
   }
@@ -1312,7 +1324,7 @@ export class PortainerClient {
     const query = signal ? { signal } : undefined;
     return this.request(
       "POST",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}/kill`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}/kill`,
       query,
     );
   }
@@ -1327,7 +1339,7 @@ export class PortainerClient {
     if (opts.removeVolumes) query.v = "true";
     return this.request(
       "DELETE",
-      `/api/endpoints/${endpointId}/docker/containers/${containerId}`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerId)}`,
       Object.keys(query).length > 0 ? query : undefined,
     );
   }
@@ -1558,11 +1570,11 @@ export class PortainerClient {
     // "POST /containers/{id}/recreate requires the full container ID".
     const resolved = await this.request<{ Id: string }>(
       "GET",
-      `/api/endpoints/${endpointId}/docker/containers/${containerRef}/json`,
+      `/api/endpoints/${endpointId}/docker/containers/${encodeContainerRef(containerRef)}/json`,
     );
     return this.request(
       "POST",
-      `/api/docker/${endpointId}/containers/${resolved.Id}/recreate`,
+      `/api/docker/${endpointId}/containers/${encodeContainerRef(resolved.Id)}/recreate`,
       undefined,
       { PullImage: opts.pullImage },
     );
