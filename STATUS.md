@@ -976,6 +976,52 @@ session → PortainerClient → host.docker.internal:9443 → Portainer).
 
 ## Next
 
+### Claude Code MCP task compatibility (planned 2026-11-06)
+
+**Status:** pending verification; documentation-only planning. Source review found
+ordinary tool calls and no explicit MCP protocol-task opt-in. No live Claude
+Code/NAS compatibility test has been run and no runtime change is authorized by
+this entry. JavaScript async handlers, progress notifications and upstream jobs
+are not themselves MCP protocol tasks.
+
+- [ ] With Claude Code 2.1.319 (or the version under evaluation), record the client
+  version, server revision/SDK version and transport. Initialize, list tools and
+  run one harmless read through each supported transport (stdio and Streamable
+  HTTP where configured). Confirm a non-empty result and usable session; check
+  reconnect after an expired HTTP session where applicable.
+- [ ] Inspect advertised capabilities and tool execution metadata: ordinary tools
+  must remain callable without task augmentation; do not advertise task support
+  without a functioning task lifecycle. Preserve existing confirmations, auth,
+  error reporting and bounded resource use.
+- [ ] Record pass/fail evidence and any actual defect in this document. Do not
+  introduce an SDK major upgrade or blanket conversion to tasks solely for this
+  client release. Use existing read-only integration targets or disposable
+  fixtures; compatibility checks must not mutate production.
+
+Claude Code 2.1.319 backgrounds calls invoked as MCP tasks and later delivers the
+result; ordinary calls retain their result contract. The same release fixes an
+older-handshake compatibility issue. If task support is adopted later,
+`CLAUDE_CODE_DISABLE_MCP_TASK_BACKGROUND` is a client-side diagnostic fallback,
+not a required server setting or a replacement for lifecycle correctness.
+
+Sources: [Claude Code changelog, 2.1.319](https://github.com/anthropics/claude-code/blob/main/CHANGELOG.md#21319);
+[MCP task capability and tool negotiation](https://modelcontextprotocol.io/specification/2025-11-25/basic/utilities/tasks).
+
+**Optional enhancement — gated design for long redeploy operations.** Evaluate
+`portainer_redeploy_stack` and git-stack redeploy for optional task execution only
+after the compatibility baseline above. Preserve ordinary calls for clients
+without task support. Before implementation, settle task ownership/auth,
+status/result retention and TTL, bounded polling/concurrency, disconnect/restart
+behavior, cancellation versus an upstream operation that cannot be rolled back,
+and idempotency/reconciliation so retries do not redeploy twice. Preserve
+confirmation gates and report upstream acceptance separately from verified
+container state. Explicitly handle self-redeploy: an in-process task store cannot
+survive replacement of this MCP container. Validate normal completion, failure,
+reconnect, cancellation and duplicate requests against a disposable stack; do not
+use a production redeploy as a compatibility probe. Adoption requires design
+approval and SDK capability review; this entry does not authorize implementation.
+
+
 - **TypeScript 5.9.3 → 7.0.2 (part of Dependabot PR #11) is deliberately
   deferred, not just deprioritized (researched 2026-08-28).**
 
