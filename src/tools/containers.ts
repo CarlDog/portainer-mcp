@@ -7,6 +7,17 @@ import {
   type PortainerClient,
 } from "../portainer.js";
 
+// Docker inspect/list names include a leading slash. Accept that wire form,
+// then use the canonical name; further separators and URL syntax are invalid.
+const containerIdSchema = z
+  .string()
+  .min(1)
+  .regex(
+    /^\/?[A-Za-z0-9][A-Za-z0-9_.-]*$/,
+    "Expected a Docker container ID or name (letters, digits, _, . and -)",
+  )
+  .transform((id) => (id.startsWith("/") ? id.slice(1) : id));
+
 export function registerContainerTools(
   server: McpServer,
   p: PortainerClient,
@@ -76,7 +87,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           full: z
             .boolean()
             .optional()
@@ -103,9 +114,9 @@ export function registerContainerTools(
           a: z
             .object({
               endpoint_id: z.number().int().describe("Endpoint ID for side A"),
-              container_id: z
-                .string()
-                .describe("Container ID or name for side A"),
+              container_id: containerIdSchema.describe(
+                "Container ID or name for side A",
+              ),
               var_name: z
                 .string()
                 .describe("Env var name to compare on side A"),
@@ -114,9 +125,9 @@ export function registerContainerTools(
           b: z
             .object({
               endpoint_id: z.number().int().describe("Endpoint ID for side B"),
-              container_id: z
-                .string()
-                .describe("Container ID or name for side B"),
+              container_id: containerIdSchema.describe(
+                "Container ID or name for side B",
+              ),
               var_name: z
                 .string()
                 .describe("Env var name to compare on side B"),
@@ -151,7 +162,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           tail: z
             .number()
             .int()
@@ -237,7 +248,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
         })
         .strict(),
     },
@@ -261,7 +272,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           timeout: z
             .number()
             .int()
@@ -293,7 +304,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           timeout: z
             .number()
             .int()
@@ -325,7 +336,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           signal: z
             .string()
             .optional()
@@ -361,7 +372,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           force: z
             .boolean()
             .optional()
@@ -405,7 +416,7 @@ export function registerContainerTools(
       inputSchema: z
         .object({
           endpoint_id: z.number().int().describe("Endpoint ID"),
-          container_id: z.string().describe("Container ID or name"),
+          container_id: containerIdSchema.describe("Container ID or name"),
           pull_image: z
             .boolean()
             .optional()
